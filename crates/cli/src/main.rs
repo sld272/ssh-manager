@@ -462,6 +462,7 @@ fn dispatch(cli: &Cli, cancel: Arc<AtomicBool>) -> Result<Value> {
                     c.issues.clear();
                 }
                 if auth.selected() {
+                    c.identities_only = !auth.key.is_empty();
                     c.authentication = auth.value()?;
                 }
                 if let Some(v) = name {
@@ -533,6 +534,7 @@ fn dispatch(cli: &Cli, cancel: Arc<AtomicBool>) -> Result<Value> {
                     address: address.clone(),
                     user: user.clone(),
                     port: *port,
+                    identities_only: !auth.key.is_empty(),
                     authentication: auth.value()?,
                     jumps: jumps(&store, jump)?,
                     issues: vec![],
@@ -817,10 +819,48 @@ fn dispatch(cli: &Cli, cancel: Arc<AtomicBool>) -> Result<Value> {
     }
 }
 
-fn render(value: &Value, json_output: bool) -> Result<()> {
-    if json_output {
+fn render(value: &Value, cli: &Cli) -> Result<()> {
+    if cli.json {
         println!("{}", serde_json::to_string_pretty(value)?);
         return Ok(());
+    }
+    match &cli.command {
+        Commands::Host {
+            command: HostCommand::List { .. },
+        } => {
+            let hosts: Vec<Host> = serde_json::from_value(value.clone())?;
+            if hosts.is_empty() {
+                println!("还没有主机，可添加一台服务器或导入 SSH 配置。");
+            }
+            for host in hosts {
+                print_host(&host, false)?;
+            }
+            return Ok(());
+        }
+        Commands::Host {
+            command: HostCommand::Show { .. },
+        } => {
+            let host: Host = serde_json::from_value(value.clone())?;
+            print_host(&host, true)?;
+            return Ok(());
+        }
+        Commands::Host {
+            command: HostCommand::Import { apply: false, .. },
+        } => {
+            let plan: importer::ImportPlan = serde_json::from_value(value.clone())?;
+            println!(
+                "找到 {} 台主机，确认后可使用 --apply 保存。",
+                plan.hosts.len()
+            );
+            for host in plan.hosts {
+                print_host(&host, false)?;
+            }
+            for warning in plan.warnings {
+                println!("提示：{warning}");
+            }
+            return Ok(());
+        }
+        _ => {}
     }
     if value.get("operation_id").is_some() {
         let r: OperationResult = serde_json::from_value(value.clone())?;
@@ -836,6 +876,9 @@ fn render(value: &Value, json_output: bool) -> Result<()> {
             Status::TransferFailed => "传输未完成",
         };
         println!("{status} · {} ms", r.duration_ms);
+        if let Some(receipt) = &r.transfer {
+            println!("{} → {}", receipt.source, receipt.destination);
+        }
         if !r.stdout.is_empty() {
             print!("{}", r.stdout);
         }
@@ -850,6 +893,70 @@ fn render(value: &Value, json_output: bool) -> Result<()> {
         }
     } else {
         println!("{}", serde_json::to_string_pretty(value)?);
+    }
+    Ok(())
+}
+fn print_host(h: &Host, details: bool) -> Result<()> {
+    let c = h.connection(None)?;
+    let auth = match c.authentication {
+        Authentication::Agent => "ssh-agent",
+        Authentication::Key { .. } => "密钥",
+        Authentication::Password { .. } => "密码",
+    };
+    println!(
+        "{}  {}@{}:{}  {}{}",
+        h.name,
+        c.user,
+        c.address,
+        c.port,
+        auth,
+        if c.issues.is_empty() {
+            ""
+        } else {
+            " · 待补全"
+        }
+    );
+    if !h.context.description.is_empty() {
+        println!("  {}", h.context.description);
+    }
+    for issue in &c.issues {
+        println!("  提示：{issue}");
+    }
+    if details {
+        println!("  主机 ID：{}", h.id);
+        for p in &h.context.projects {
+            println!("  项目 {}：{}", p.name, p.path);
+        }
+        for note in &h.context.agent_notes {
+            println!(
+                "  {}  {}",
+                note.recorded_at
+                    .with_timezone(&chrono::Local)
+                    .format("%Y-%m-%d %H:%M"),
+                note.text
+            );
+        }
+        if let Some(facts) = &h.context.probed_facts {
+            println!(
+                "  最近检查：{} · {} {}",
+                facts
+                    .observed_at
+                    .with_timezone(&chrono::Local)
+                    .format("%Y-%m-%d %H:%M"),
+                facts.system,
+                facts.architecture
+            );
+        }
+        if h.connections.len() > 1 {
+            println!(
+                "  登录配置：{}",
+                h.connections
+                    .iter()
+                    .map(|c| c.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join("、")
+            );
+        }
     }
     Ok(())
 }
@@ -871,7 +978,31 @@ fn main() {
             1
         });
     }
-    let cli = Cli::parse();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) => {
+            if matches!(
+                e.kind(),
+                clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion
+            ) {
+                let _ = e.print();
+                std::process::exit(0);
+            }
+            // --json exec vm --timeout 0 must return a structured argument error without entering an interactive prompt.
+            if std::env::args()
+                .take_while(|s| s != "--")
+                .any(|s| s == "--json")
+            {
+                println!(
+                    "{}",
+                    json!({"schema_version":1,"error":Error::new("invalid_arguments",e.to_string())})
+                );
+            } else {
+                let _ = e.print();
+            }
+            std::process::exit(2);
+        }
+    };
     let cancel = Arc::new(AtomicBool::new(false));
     let signal = cancel.clone();
     if let Err(e) = ctrlc::set_handler(move || {
@@ -900,7 +1031,7 @@ fn main() {
                 .get("status")
                 .and_then(Value::as_str)
                 .is_some_and(|s| s != "succeeded");
-            if let Err(e) = render(&value, cli.json) {
+            if let Err(e) = render(&value, &cli) {
                 eprintln!("{e}");
                 std::process::exit(2);
             }

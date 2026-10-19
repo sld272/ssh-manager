@@ -37,6 +37,8 @@ impl Store {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
         db.busy_timeout(Duration::from_secs(5))?;
         db.pragma_update(None, "foreign_keys", "ON")?;
+        // Two MCP requests can open a new catalog simultaneously; serialize the version check and schema creation.
+        db.execute_batch("BEGIN IMMEDIATE")?;
         let version: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
         // A catalog created by a newer release (user_version=2) must not be rewritten as v1.
         require(
@@ -45,9 +47,9 @@ impl Store {
             "数据由较新版本创建，请更新 ssh-manager",
         )?;
         if version == 0 {
-            db.execute_batch("BEGIN IMMEDIATE; CREATE TABLE hosts(id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, body TEXT NOT NULL); CREATE TABLE operations(id TEXT PRIMARY KEY, host_id TEXT NOT NULL, started_at TEXT NOT NULL, body TEXT NOT NULL); CREATE INDEX operations_host ON operations(host_id, started_at); PRAGMA user_version=1; COMMIT;")?;
+            db.execute_batch("CREATE TABLE hosts(id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, body TEXT NOT NULL); CREATE TABLE operations(id TEXT PRIMARY KEY, host_id TEXT NOT NULL, started_at TEXT NOT NULL, body TEXT NOT NULL); CREATE INDEX operations_host ON operations(host_id, started_at); PRAGMA user_version=1;")?;
         }
-        private_dir(&root.join("runtime"))?;
+        db.execute_batch("COMMIT")?;
         Ok(Self { db, root })
     }
     pub fn root(&self) -> &Path {

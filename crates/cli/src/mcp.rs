@@ -259,14 +259,31 @@ pub fn serve(root: PathBuf, shutdown: Arc<AtomicBool>) -> Result<()> {
     let mut workers = vec![];
     let mut initialized = false;
     let mut ready = false;
-    let input = std::io::stdin();
-    let mut input = input.lock();
-    let mut line = String::new();
+    let (sender, receiver) = std::sync::mpsc::sync_channel(16);
+    std::thread::spawn(move || {
+        let input = std::io::stdin();
+        let mut input = input.lock();
+        loop {
+            let mut line = String::new();
+            match input.read_line(&mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    if sender.send(line).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
     loop {
-        line.clear();
-        if input.read_line(&mut line)? == 0 || shutdown.load(Ordering::Relaxed) {
+        if shutdown.load(Ordering::Relaxed) {
             break;
         }
+        let line = match receiver.recv_timeout(Duration::from_millis(50)) {
+            Ok(v) => v,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(_) => break,
+        };
         let request: Value = match serde_json::from_str(&line) {
             Ok(v) => v,
             Err(_) => {

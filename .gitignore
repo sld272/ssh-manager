@@ -11,3 +11,5 @@
 *.docx
 *.pptx
 *.pptd
+__pycache__/
+*.pyc

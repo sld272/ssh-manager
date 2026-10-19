@@ -23,6 +23,9 @@ pub struct Connection {
     pub port: u16,
     pub user: String,
     pub authentication: Authentication,
+    // Catalogs created before the first VM verification did not store IdentitiesOnly; their default was false.
+    #[serde(default)]
+    pub identities_only: bool,
     /// Ordered connection IDs; all hops are local OpenSSH connections.
     pub jumps: Vec<Uuid>,
     pub issues: Vec<String>,
@@ -89,6 +92,7 @@ impl Host {
                 address,
                 port,
                 user,
+                identities_only: matches!(&authentication, Authentication::Key { .. }),
                 authentication,
                 jumps: vec![],
                 issues: vec![],
@@ -174,6 +178,7 @@ impl Host {
         Ok(())
     }
 }
+// A selector such as "web/production" or "--help" must not become a config alias or CLI option.
 pub fn validate_name(s: &str) -> Result<()> {
     require(
         !s.is_empty()
@@ -184,6 +189,7 @@ pub fn validate_name(s: &str) -> Result<()> {
         "名称可使用文字、数字、点、下划线和连字符",
     )
 }
+// A relative cwd such as "../srv" is ambiguous, and a path containing a newline would create a second SFTP batch command.
 pub fn validate_absolute_path(s: &str) -> Result<()> {
     require(
         s.starts_with('/') && !s.chars().any(|c| c.is_control()),

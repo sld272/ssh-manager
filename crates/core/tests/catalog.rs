@@ -178,3 +178,41 @@ fn timeouts_kill_local_descendants_and_release_pipes() {
     assert_eq!(result.termination.as_deref(), Some("timeout"));
     assert!(start.elapsed() < Duration::from_secs(2));
 }
+
+#[test]
+fn explicit_missing_identity_is_reported_without_discarding_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config");
+    let present = dir.path().join("present");
+    let missing = dir.path().join("missing");
+    fs::write(&present, "").unwrap();
+    fs::write(&config,format!("Host vm\n HostName 192.0.2.1\n User user\n IdentitiesOnly yes\n IdentityFile {}\n IdentityFile {}\n",present.display(),missing.display())).unwrap();
+    let p = importer::preview(&config, &["vm".into()]).unwrap();
+    let c = &p.hosts[0].connections[0];
+    assert!(c.identities_only);
+    assert_eq!(c.issues.len(), 1);
+    match &c.authentication {
+        Authentication::Key { paths, .. } => assert_eq!(paths.len(), 2),
+        _ => panic!("missing key authentication"),
+    }
+}
+
+#[test]
+fn first_use_catalog_creation_is_serialized_across_callers() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = std::sync::Arc::new(dir.path().to_path_buf());
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(4));
+    let threads: Vec<_> = (0..4)
+        .map(|_| {
+            let root = root.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                Store::open(&*root).unwrap().list().unwrap()
+            })
+        })
+        .collect();
+    for thread in threads {
+        assert!(thread.join().unwrap().is_empty());
+    }
+}

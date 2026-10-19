@@ -143,12 +143,14 @@ impl OpenSsh<'_> {
                 )?,
                 Authentication::Agent => writeln!(
                     file,
-                    "  PreferredAuthentications publickey\n  IdentityFile none\n  PasswordAuthentication no\n  BatchMode no"
+                    "  PreferredAuthentications publickey\n  IdentityFile none\n  PasswordAuthentication no\n  BatchMode no\n  IdentitiesOnly {}",
+                    if conn.identities_only { "yes" } else { "no" }
                 )?,
                 Authentication::Key { paths, .. } => {
                     writeln!(
                         file,
-                        "  PreferredAuthentications publickey\n  IdentitiesOnly yes\n  IdentityAgent none\n  PasswordAuthentication no\n  BatchMode no"
+                        "  PreferredAuthentications publickey\n  IdentitiesOnly {}\n  PasswordAuthentication no\n  BatchMode no",
+                        if conn.identities_only { "yes" } else { "no" }
                     )?;
                     for path in paths {
                         writeln!(file, "  IdentityFile {}", config_quote(path))?;
@@ -212,7 +214,7 @@ impl OpenSsh<'_> {
             "命令不能为空或包含空字符",
         )?;
         error::require(
-            !options.timeout.is_zero() && options.output_limit > 0,
+            !options.timeout.is_zero() && (1..=16777216).contains(&options.output_limit),
             "invalid_options",
             "超时和输出上限必须大于零",
         )?;

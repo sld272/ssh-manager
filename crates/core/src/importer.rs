@@ -253,11 +253,11 @@ pub fn preview(source: &Path, selected: &[String]) -> Result<ImportPlan> {
             .cloned()
             .collect();
         let explicit_keys = structure.identities.iter().any(|p| matches(p, &name));
-        let authentication = if existing.is_empty() && !explicit_keys {
+        let authentication = if keys.is_empty() || (existing.is_empty() && !explicit_keys) {
             Authentication::Agent
         } else {
             Authentication::Key {
-                paths: if existing.is_empty() { keys } else { existing },
+                paths: if explicit_keys { keys } else { existing },
                 passphrase_ref: None,
             }
         };
@@ -271,6 +271,7 @@ pub fn preview(source: &Path, selected: &[String]) -> Result<ImportPlan> {
             authentication,
         );
         let c = &mut h.connections[0];
+        c.identities_only = value("identitiesonly") == "yes";
         c.issues = structure
             .unsupported
             .iter()
@@ -286,6 +287,10 @@ pub fn preview(source: &Path, selected: &[String]) -> Result<ImportPlan> {
                     c.issues.push(format!("密钥文件不存在：{p}"));
                 }
             }
+        }
+        if c.identities_only && matches!(c.authentication, Authentication::Agent) {
+            c.issues
+                .push("仅使用指定身份，但没有可用的密钥文件，请重新选择认证方式".into());
         }
         let jump = value("proxyjump");
         if !jump.is_empty() && jump != "none" {

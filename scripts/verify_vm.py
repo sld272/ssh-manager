@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import select
 import shlex
@@ -79,6 +80,8 @@ with tempfile.TemporaryDirectory(prefix='sshm-verify-') as directory:
         return result
 
     try:
+        invalid = call('exec', host, '--timeout', '0', '--', 'true')
+        expect('structured_argument_error', invalid.get('error',{}).get('code') == 'invalid_arguments')
         check = success(call('check', host))
         expect('password_connection', check['exit_code'] == 0 and 'Linux' in check['stdout'])
         r = execute("printf 'out'; printf 'err' >&2; exit 255")
@@ -155,6 +158,55 @@ with tempfile.TemporaryDirectory(prefix='sshm-verify-') as directory:
         expect('password_proxyjump', r['exit_code'] == 0)
         call('host', 'edit', host, '--no-jump')
 
+        encrypted_key = local / 'encrypted-key'
+        agent_key = local / 'agent-key'
+        fixture_passphrase = 'ssh-manager-test-passphrase'
+        subprocess.run(['ssh-keygen','-q','-t','ed25519','-N',fixture_passphrase,'-f',str(encrypted_key)],check=True)
+        subprocess.run(['ssh-keygen','-q','-t','ed25519','-N','','-f',str(agent_key)],check=True)
+        keys = [encrypted_key.with_suffix('.pub').read_text().strip(), agent_key.with_suffix('.pub').read_text().strip()]
+        authorized_before = success(execute('if test -f ~/.ssh/authorized_keys; then printf yes; else printf no; fi'))['stdout'] == 'yes'
+        key_block = '\n' + '\n'.join(keys) + '\n'
+        success(execute('mkdir -m 700 -p ~/.ssh; if ! test -f ~/.ssh/authorized_keys; then (umask 077; touch ~/.ssh/authorized_keys); fi; printf %s ' + shlex.quote(key_block) + ' >> ~/.ssh/authorized_keys'))
+        agent_pid = None
+        previous_socket = os.environ.get('SSH_AUTH_SOCK')
+        try:
+            call('connection','add',host,'verify-key','--address',address,'--user',user,'--key',str(encrypted_key))
+            call('trust','import',host,'--connection','verify-key')
+            p = subprocess.run([binary,'--json','--data-dir',str(data),'credential','set',host,'--connection','verify-key','--passphrase','--password-stdin'],input=fixture_passphrase,capture_output=True,text=True,timeout=10)
+            assert json.loads(p.stdout).get('saved'), p.stdout
+            r = success(call('check',host,'--connection','verify-key'))
+            expect('encrypted_private_key_askpass',r['exit_code']==0)
+            env = subprocess.check_output(['ssh-agent','-s'],text=True)
+            socket = re.search(r'SSH_AUTH_SOCK=([^;]+)',env).group(1)
+            agent_pid = int(re.search(r'SSH_AGENT_PID=(\d+)',env).group(1))
+            os.environ['SSH_AUTH_SOCK'] = socket
+            subprocess.run(['ssh-add',str(agent_key)],check=True,capture_output=True)
+            call('connection','add',host,'verify-agent','--address',address,'--user',user,'--agent')
+            call('trust','import',host,'--connection','verify-agent')
+            r=success(call('check',host,'--connection','verify-agent'))
+            expect('ssh_agent_authentication',r['exit_code']==0)
+            call('connection','add',host,'verify-rejected','--address',address,'--user',user,'--password')
+            call('trust','import',host,'--connection','verify-rejected')
+            p=subprocess.run([binary,'--json','--data-dir',str(data),'credential','set',host,'--connection','verify-rejected','--password-stdin'],input='deliberately-invalid-'+uuid.uuid4().hex,capture_output=True,text=True,timeout=10)
+            assert json.loads(p.stdout).get('saved'),p.stdout
+            r=call('check',host,'--connection','verify-rejected')
+            expect('authentication_rejection',r['status']=='authentication_failed' and r['phase']=='not_started',r)
+        finally:
+            for name in ['verify-key','verify-agent','verify-rejected']:
+                call('connection','remove',host,name)
+            if previous_socket is None:
+                os.environ.pop('SSH_AUTH_SOCK',None)
+            else:
+                os.environ['SSH_AUTH_SOCK']=previous_socket
+            if agent_pid:
+                os.kill(agent_pid,signal.SIGTERM)
+            cleanup_keys = 'from pathlib import Path; p=Path.home()/".ssh/authorized_keys"; block=' + repr(key_block.encode()) + '; p.write_bytes(p.read_bytes().replace(block,b"",1))'
+            success(execute('python3 -c ' + shlex.quote(cleanup_keys)))
+            if not authorized_before:
+                success(execute('test -s ~/.ssh/authorized_keys || rm -f ~/.ssh/authorized_keys'))
+        r=execute('kill -KILL "$PPID"')
+        expect('lost_session_is_unknown',r['status']=='result_unknown' and r['phase']=='started' and r['exit_code'] is None,r)
+
         mcp = subprocess.Popen([binary, '--data-dir', str(data), 'mcp'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
             r = rpc(mcp, {'jsonrpc':'2.0', 'id':1, 'method':'initialize', 'params':{'protocolVersion':'2025-11-25', 'capabilities':{}, 'clientInfo':{'name':'vm-verifier', 'version':'1'}}})
@@ -170,6 +222,8 @@ with tempfile.TemporaryDirectory(prefix='sshm-verify-') as directory:
             time.sleep(1)
             r = rpc(mcp, {'jsonrpc':'2.0','method':'notifications/cancelled','params':{'requestId':4}}, timeout=5)
             expect('mcp_cancel', r['id'] == 4 and r['result']['structuredContent']['termination'] == 'cancelled')
+            mcp.send_signal(signal.SIGTERM)
+            expect('mcp_signal_shutdown', mcp.wait(timeout=3) == 0)
         finally:
             mcp.stdin.close()
             mcp.wait(timeout=5)
