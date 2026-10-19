@@ -1,0 +1,32 @@
+[package]
+name = "ssh-manager-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+thiserror.workspace = true
+tempfile.workspace = true
+zeroize.workspace = true
+rusqlite = { version = "0.40", features = ["bundled"] }
+directories = "6"
+glob = "0.3"
+fs2 = "0.4"
+shell-words = "1"
+libc = "0.2"
+sha2 = "0.10"
+base64 = "0.22"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3.6", features = ["apple-native"] }
+security-framework = "3.7"
+security-framework-sys = "2.17"
+core-foundation = "0.10"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3.6", features = ["sync-secret-service", "crypto-rust", "vendored"] }
