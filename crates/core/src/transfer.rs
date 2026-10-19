@@ -12,16 +12,13 @@ pub enum TransferMode {
     File,
     Contents,
 }
+// OpenSSH sftp already escapes glob characters inside quotes; adding another backslash turns [test] into a different filename.
 fn sftp_quote(s: &str) -> String {
     let mut result = String::from("\"");
     for c in s.chars() {
         match c {
             '\\' | '"' => {
                 result.push('\\');
-                result.push(c);
-            }
-            '*' | '?' | '[' => {
-                result.push_str("\\\\");
                 result.push(c);
             }
             _ => result.push(c),
@@ -217,6 +214,9 @@ impl OpenSsh<'_> {
                 result.next_step = Some(format!("已下载，但无法保存到目标位置：{}", e.error));
             }
         }
+        let h = self.store.host(host)?;
+        self.store
+            .record(&result, &h.name, &options.caller, options.reason.as_deref())?;
         Ok(result)
     }
     fn transfer(
@@ -238,7 +238,21 @@ impl OpenSsh<'_> {
         cmd.args(["-oBatchMode=no", "-b", "-", "--", &session.alias]);
         let raw = process::run(
             cmd,
-            Some(format!("{}\n", lines.join("\n")).into_bytes()),
+            Some(
+                format!(
+                    "{}\n",
+                    lines
+                        .iter()
+                        .map(|line| if let Some(rest) = line.strip_prefix('-') {
+                            format!("-@{rest}")
+                        } else {
+                            format!("@{line}")
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                )
+                .into_bytes(),
+            ),
             options.timeout,
             options.cancel.clone(),
             options.output_limit,

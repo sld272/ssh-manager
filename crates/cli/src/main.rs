@@ -384,7 +384,9 @@ fn dispatch(cli: &Cli, cancel: Arc<AtomicBool>) -> Result<Value> {
         None => Store::default_root()?,
     };
     let store = Store::open(root)?;
-    let credentials = SystemCredentials;
+    let credentials = SystemCredentials {
+        helper_executable: std::env::current_exe()?,
+    };
     let ssh = OpenSsh {
         store: &store,
         credentials: &credentials,
@@ -616,7 +618,7 @@ fn dispatch(cli: &Cli, cancel: Arc<AtomicBool>) -> Result<Value> {
                     Authentication::Key { passphrase_ref, .. } => passphrase_ref.clone(),
                     _ => None,
                 };
-                let reference = previous.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+                let reference = uuid::Uuid::new_v4().to_string();
                 credentials.set(&reference, &secret)?;
                 if *passphrase {
                     if let Authentication::Key { passphrase_ref, .. } =
@@ -630,8 +632,10 @@ fn dispatch(cli: &Cli, cancel: Arc<AtomicBool>) -> Result<Value> {
                     };
                 }
                 store.save(&h)?;
+                let pending_cleanup =
+                    previous.filter(|reference| credentials.delete(reference).is_err());
                 Ok(
-                    json!({"saved":true,"host_id":h.id,"connection_id":h.connections[i].id,"purpose":if *passphrase{"key_passphrase"}else{"login_password"}}),
+                    json!({"previous_credential_pending_cleanup":pending_cleanup,"saved":true,"host_id":h.id,"connection_id":h.connections[i].id,"purpose":if *passphrase{"key_passphrase"}else{"login_password"}}),
                 )
             }
             CredentialCommand::Remove { host, connection } => {
@@ -850,6 +854,15 @@ fn render(value: &Value, json_output: bool) -> Result<()> {
     Ok(())
 }
 fn main() {
+    if let Ok(reference) = std::env::var("SSH_MANAGER_CREDENTIAL_HELPER") {
+        std::process::exit(
+            if credentials::system_credential_helper(&reference).is_ok() {
+                0
+            } else {
+                1
+            },
+        );
+    }
     if std::env::var_os("SSH_MANAGER_ASKPASS").is_some() {
         let prompt = std::env::args().nth(1).unwrap_or_default();
         std::process::exit(if credentials::askpass(&prompt).is_ok() {

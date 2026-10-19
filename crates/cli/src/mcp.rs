@@ -161,7 +161,9 @@ fn invoke(root: PathBuf, name: &str, arguments: Value, cancel: Arc<AtomicBool>) 
         caller: "mcp".into(),
         reason: a.reason,
     };
-    let credentials = SystemCredentials;
+    let credentials = SystemCredentials {
+        helper_executable: std::env::current_exe()?,
+    };
     let ssh = OpenSsh {
         store: &store,
         credentials: &credentials,

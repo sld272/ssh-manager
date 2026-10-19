@@ -141,7 +141,7 @@ impl Store {
             reason: reason.map(str::to_owned),
         };
         self.db.execute(
-            "INSERT INTO operations VALUES(?1,?2,?3,?4)",
+            "INSERT INTO operations VALUES(?1,?2,?3,?4) ON CONFLICT(id) DO UPDATE SET body=excluded.body",
             params![
                 r.operation_id.to_string(),
                 r.host_id.to_string(),

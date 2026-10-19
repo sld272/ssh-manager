@@ -20,37 +20,64 @@ pub trait CredentialStore {
     fn set(&self, reference: &str, secret: &str) -> Result<()>;
     fn delete(&self, reference: &str) -> Result<()>;
 }
-pub struct SystemCredentials;
+/// A separate invocation of the bundled CLI isolates native keychain UI policy from embedding applications.
+pub struct SystemCredentials {
+    pub helper_executable: PathBuf,
+}
+impl SystemCredentials {
+    fn invoke(
+        &self,
+        reference: &str,
+        action: &str,
+        input: Option<Vec<u8>>,
+    ) -> Result<Zeroizing<String>> {
+        let mut command = std::process::Command::new(&self.helper_executable);
+        command
+            .env("SSH_MANAGER_CREDENTIAL_HELPER", reference)
+            .env("SSH_MANAGER_CREDENTIAL_ACTION", action);
+        let mut output = crate::process::run(
+            command,
+            input,
+            Duration::from_secs(5),
+            Arc::new(AtomicBool::new(false)),
+            65536,
+            None,
+        )?;
+        // A locked keychain or an executable whose access was revoked must fail within five seconds, without opening a dialog.
+        if output.termination.is_some() || output.code != Some(0) {
+            output.stdout.bytes.zeroize();
+            return Err(Error::new(
+                "credential_backend_unavailable",
+                "无法访问系统凭据，请解锁并授权访问，或重新绑定凭据",
+            ));
+        }
+        let bytes = Zeroizing::new(output.stdout.bytes);
+        let text = std::str::from_utf8(&bytes).map_err(|_| {
+            Error::new(
+                "invalid_credential_encoding",
+                "保存的凭据不是 UTF-8 文本，请重新绑定",
+            )
+        })?;
+        Ok(Zeroizing::new(text.to_owned()))
+    }
+}
 impl CredentialStore for SystemCredentials {
     fn get(&self, reference: &str) -> Result<Zeroizing<String>> {
-        #[cfg(target_os = "macos")]
-        {
-            macos_get(reference)
-        }
-        #[cfg(target_os = "linux")]
-        {
-            keyring::Entry::new("dev.ssh-manager", reference)
-                .and_then(|e| e.get_password())
-                .map(Zeroizing::new)
-                .map_err(credential_error)
-        }
+        self.invoke(reference, "get", None)
     }
     fn set(&self, reference: &str, secret: &str) -> Result<()> {
+        // Empty input and a multiline value cannot be represented by OpenSSH askpass's one-line response.
         crate::error::require(
-            !secret.is_empty() && !secret.contains(['\n', '\r', '\0']),
+            !secret.is_empty() && secret.len() <= 65536 && !secret.contains(['\n', '\r', '\0']),
             "invalid_credential",
-            "凭据不能为空或包含换行",
+            "凭据不能为空、过长或包含换行",
         )?;
-        keyring::Entry::new("dev.ssh-manager", reference)
-            .and_then(|e| e.set_password(secret))
-            .map_err(credential_error)
+        self.invoke(reference, "set", Some(secret.as_bytes().to_vec()))?;
+        Ok(())
     }
     fn delete(&self, reference: &str) -> Result<()> {
-        match keyring::Entry::new("dev.ssh-manager", reference).and_then(|e| e.delete_credential())
-        {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(credential_error(e)),
-        }
+        self.invoke(reference, "delete", None)?;
+        Ok(())
     }
 }
 fn credential_error(e: keyring::Error) -> Error {
@@ -89,14 +116,6 @@ impl Broker {
                 } => {
                     let prompt = format!("{}@{}'s password: ", c.user, crate::ssh::alias(c.id));
                     let secret = credentials.get(reference)?;
-                    // Two references for the same generated host alias must never receive different secrets.
-                    if let Some(existing) = prompts.get(&prompt) {
-                        crate::error::require(
-                            **existing == *secret,
-                            "ambiguous_credential",
-                            "跳板与目标的认证提示重名，请使用密钥认证或不同地址",
-                        )?;
-                    }
                     prompts.insert(prompt, secret);
                 }
                 Authentication::Key {
@@ -204,41 +223,55 @@ pub fn askpass(prompt: &str) -> Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "macos")]
-fn macos_get(reference: &str) -> Result<Zeroizing<String>> {
-    use core_foundation::{
-        base::TCFType,
-        string::{CFString, CFStringRef},
-    };
-    use security_framework::passwords::{PasswordOptions, generic_password};
-    #[link(name = "Security", kind = "framework")]
-    unsafe extern "C" {
-        static kSecUseAuthenticationUIFail: CFStringRef;
+/// Called only in a short-lived credential helper. stdout is consumed privately by SystemCredentials.
+pub fn system_credential_helper(reference: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    let _no_ui =
+        security_framework::os::macos::keychain::SecKeychain::disable_user_interaction()
+            .map_err(|_| Error::new("credential_backend_unavailable", "无法设置凭据访问方式"))?;
+    let entry = keyring::Entry::new("dev.ssh-manager", reference).map_err(credential_error)?;
+    match std::env::var("SSH_MANAGER_CREDENTIAL_ACTION").as_deref() {
+        Ok("get") => {
+            let secret = Zeroizing::new(entry.get_password().map_err(credential_error)?);
+            std::io::stdout().write_all(secret.as_bytes())?;
+        }
+        Ok("set") => {
+            let mut secret = Zeroizing::new(String::new());
+            std::io::stdin().take(65537).read_to_string(&mut secret)?;
+            crate::error::require(secret.len() <= 65536, "invalid_credential", "凭据过长")?;
+            entry.set_password(&secret).map_err(credential_error)?;
+        }
+        Ok("delete") => {
+            #[cfg(target_os = "macos")]
+            {
+                match security_framework::passwords::delete_generic_password(
+                    "dev.ssh-manager",
+                    reference,
+                ) {
+                    Ok(()) => {}
+                    Err(e) if e.code() == -25300 => {}
+                    Err(_) => {
+                        return Err(Error::new(
+                            "credential_backend_unavailable",
+                            "无法删除系统凭据",
+                        ));
+                    }
+                }
+            }
+            #[cfg(target_os = "linux")]
+            {
+                match entry.delete_credential() {
+                    Ok(()) | Err(keyring::Error::NoEntry) => {}
+                    Err(e) => return Err(credential_error(e)),
+                }
+            }
+        }
+        _ => {
+            return Err(Error::new(
+                "invalid_credential_operation",
+                "不支持此凭据操作",
+            ));
+        }
     }
-    let mut options = PasswordOptions::new_generic_password("dev.ssh-manager", reference);
-    // A locked login keychain must return an error instead of opening a dialog during an agent's exec call.
-    #[allow(deprecated)]
-    unsafe {
-        options.query.push((
-            CFString::wrap_under_get_rule(security_framework_sys::item::kSecUseAuthenticationUI),
-            CFString::wrap_under_get_rule(kSecUseAuthenticationUIFail).into_CFType(),
-        ));
-    }
-    let bytes = Zeroizing::new(generic_password(options).map_err(|e| {
-        Error::new(
-            if e.code() == -25300 {
-                "credential_unavailable"
-            } else {
-                "credential_backend_unavailable"
-            },
-            "无法读取系统凭据，请检查钥匙串是否已解锁并允许访问",
-        )
-    })?);
-    let secret = std::str::from_utf8(&bytes).map_err(|_| {
-        Error::new(
-            "invalid_credential_encoding",
-            "保存的凭据不是 UTF-8 文本，请重新绑定",
-        )
-    })?;
-    Ok(Zeroizing::new(secret.to_owned()))
+    Ok(())
 }

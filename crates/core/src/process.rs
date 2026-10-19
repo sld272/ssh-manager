@@ -10,6 +10,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use zeroize::Zeroize;
 
 #[derive(Debug)]
 pub struct Capture {
@@ -88,10 +89,11 @@ pub fn run(
         .spawn()
         .map_err(|e| Error::new("process_start_failed", format!("无法启动 SSH 工具：{e}")))?;
     let pid = child.id();
-    let writer = input.map(|data| {
+    let writer = input.map(|mut data| {
         let mut stdin = child.stdin.take().expect("piped stdin");
         thread::spawn(move || {
             let _ = stdin.write_all(&data);
+            data.zeroize();
         })
     });
     let stdout = child.stdout.take().expect("piped stdout");
