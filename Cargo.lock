@@ -1509,10 +1509,8 @@ dependencies = [
  "directories",
  "fs2",
  "glob",
- "keyring",
  "libc",
  "rusqlite",
- "security-framework 3.7.0",
  "serde",
  "serde_json",
  "sha2",
@@ -1520,6 +1518,18 @@ dependencies = [
  "tempfile",
  "thiserror",
  "uuid",
+ "zeroize",
+]
+
+[[package]]
+name = "ssh-manager-credentials"
+version = "0.1.0"
+dependencies = [
+ "keyring",
+ "security-framework 3.7.0",
+ "serde",
+ "serde_json",
+ "tempfile",
  "zeroize",
 ]
 

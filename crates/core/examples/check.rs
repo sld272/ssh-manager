@@ -8,7 +8,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let host = args.next().ok_or("请提供主机名称")?;
     let store = Store::open(Store::default_root()?)?;
     let credentials = SystemCredentials {
-        helper_executable: helper.clone().into(),
+        helper_executable: std::path::PathBuf::from(&helper)
+            .with_file_name("ssh-manager-credentials"),
     };
     let transport = OpenSsh {
         store: &store,

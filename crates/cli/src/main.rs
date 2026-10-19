@@ -344,6 +344,9 @@ enum ContextCommand {
         text: String,
     },
 }
+pub(crate) fn credential_helper() -> Result<PathBuf> {
+    Ok(std::env::current_exe()?.with_file_name("ssh-manager-credentials"))
+}
 fn absolute(p: &std::path::Path) -> Result<PathBuf> {
     let expanded = importer::expand_home(&p.to_string_lossy())?;
     Ok(if expanded.is_absolute() {
@@ -385,7 +388,7 @@ fn dispatch(cli: &Cli, cancel: Arc<AtomicBool>) -> Result<Value> {
     };
     let store = Store::open(root)?;
     let credentials = SystemCredentials {
-        helper_executable: std::env::current_exe()?,
+        helper_executable: credential_helper()?,
     };
     let ssh = OpenSsh {
         store: &store,
@@ -813,7 +816,7 @@ fn dispatch(cli: &Cli, cancel: Arc<AtomicBool>) -> Result<Value> {
                 .output()
                 .is_ok();
             Ok(
-                json!({"schema_version":1,"ssh":version,"sftp_available":sftp,"data_directory":store.root(),"credential_backend":if cfg!(target_os="macos"){"macos_keychain"}else{"secret_service"},"remote_shell":"POSIX sh","verified_platform":"macOS","config_import":"static OpenSSH","output_encoding":"UTF-8 with replacement for invalid bytes"}),
+                json!({"schema_version":1,"ssh":version,"sftp_available":sftp,"data_directory":store.root(),"credential_backend":if cfg!(target_os="macos"){"macos_keychain"}else{"secret_service"},"credential_helper":credentials.helper_executable,"credential_helper_available":credentials.helper_executable.is_file(),"credential_interaction":if cfg!(target_os="macos"){"never"}else{"password_backend_not_ready"},"remote_shell":"POSIX sh","verified_platform":"macOS","config_import":"static OpenSSH","output_encoding":"UTF-8 with replacement for invalid bytes"}),
             )
         }
     }
@@ -961,15 +964,6 @@ fn print_host(h: &Host, details: bool) -> Result<()> {
     Ok(())
 }
 fn main() {
-    if let Ok(reference) = std::env::var("SSH_MANAGER_CREDENTIAL_HELPER") {
-        std::process::exit(
-            if credentials::system_credential_helper(&reference).is_ok() {
-                0
-            } else {
-                1
-            },
-        );
-    }
     if std::env::var_os("SSH_MANAGER_ASKPASS").is_some() {
         let prompt = std::env::args().nth(1).unwrap_or_default();
         std::process::exit(if credentials::askpass(&prompt).is_ok() {

@@ -16,20 +16,51 @@
 - 操作记录默认保存目标、时间、状态、调用方与目的，不保存命令正文或完整输出。
 - 本地 stdio MCP：主机查询、连接检查、执行、传输及探索记录。
 
-已在 **macOS 客户端 → Ubuntu x86-64 虚拟机**进行实际验证。Linux 客户端使用 Secret Service 后端，尚未进行本机运行验收；Windows 客户端、GUI、可靠后台任务恢复和网络服务尚未实现。
+已在 **macOS 客户端 → Ubuntu x86-64 虚拟机**进行实际验证。Linux 客户端的密码存储尚未开放，密钥和 ssh-agent 路径仍需本机验收；Windows 客户端、GUI、可靠后台任务恢复和网络服务尚未实现。
 
 ## 构建与安装
 
 需要 Rust 1.89+、系统 OpenSSH（`ssh`、`sftp`、`ssh-keygen`、`ssh-keyscan`）。macOS 的实际验证版本为 OpenSSH 9.9p2。远端执行要求 POSIX `sh`，连接检查使用 `uname` 和 `id`，传输要求 SFTP 子系统。
 
 ```sh
-cargo build --release --locked
 cargo test --workspace --locked
-cargo install --path crates/cli --locked
+# 一同安装主命令与独立凭据组件，默认安装到 ~/.local/bin
+scripts/install.sh
 ssh-manager doctor
 ```
 
-Linux 的密码存储需要可用且已解锁的 Secret Service；不可用时明确报错，不建立明文或自制加密存储。密钥和 ssh-agent 可独立使用。凭据访问通过短进程隔离，最多等待五秒；macOS 无交互执行不会弹出钥匙串对话框。未签名开发构建更换后，系统可能要求重新授权；可通过 `credential set` 重新绑定。
+Linux 计划使用可用且已解锁的 Secret Service；当前依赖会自动发起解锁提示，因此密码后端暂不开放，返回 `credential_backend_not_ready`。密钥和 ssh-agent 可独立使用。不建立明文或自制加密存储。凭据访问由独立的 `ssh-manager-credentials` 执行，最多等待五秒。macOS 的凭据读取、写入和删除一律禁止钥匙串弹窗；系统拒绝访问时返回明确错误，不自动解锁、不反复触发授权。主命令和核心库更新不改变凭据组件的程序身份，安装脚本也不会替换内容相同的组件。
+
+未签名开发构建只有在凭据组件自身发生变化时才可能需要重新绑定；正常 CLI 更新复用现有绑定。系统钥匙串被锁定或访问权限被撤销时，操作会失败并提示在本机处理，不通过弹窗打断用户。对外分发时，凭据组件需保持稳定的签名身份。
+
+## 凭据与授权
+
+钥匙串承担本机安全存储职责，保存 SSH 登录密码和密钥口令；当前私钥仍保留在用户选择的本机文件中，主机库只保存路径。读取 SSH 配置不会额外发起钥匙串授权；文件访问受系统限制时，仍需由用户通过系统允许的方式提供访问权限。
+
+产品权限按三个步骤区分：
+
+| 操作 | 权限设计 |
+| --- | --- |
+| 添加主机、导入配置、绑定本机密钥 | 用户主动选择来源；系统实际限制访问时才处理系统授权 |
+| Agent 使用已保存的连接 | 按可信调用方和主机范围授权一次，可撤销；Agent 接口不返回凭据明文 |
+| 用户主动查看或导出密码、私钥正文 | 单独的敏感操作，计划要求 Touch ID 或本机身份确认；普通连接不触发此确认 |
+
+**当前已实现安全存储和无弹窗凭据访问，尚未实现独立的 Agent 授权管理，也没有明文查看/导出入口。** 本地 CLI/MCP 按同一操作系统用户的信任边界运行，仅交给受信任的本地调用方使用；不能将钥匙串的访问许可视为已经实现 Agent 权限隔离。
+
+### 平台差异
+
+授权语义由应用统一管理；系统凭据存储与用户身份确认分别适配，不假定三平台拥有相同的系统授权窗口。
+
+| 平台 | SSH 文件访问 | 密码存储方向 | 主动查看明文时的确认方向 |
+| --- | --- | --- | --- |
+| macOS | 普通文件权限；沙箱 GUI 导入通过用户选择与持久文件授权处理 | Keychain；凭据组件保持稳定签名；日常访问禁止系统交互 | Touch ID 或本机身份确认 |
+| Windows | 当前用户的 NTFS 权限；正常读取用户 SSH 目录不应主动请求管理员权限；WSL 单独处理 | 当前用户登录会话的 Credential Manager，不将其当作 Agent 身份授权 | 根据可用能力使用 Windows Hello / 系统身份确认，不因功能不可用直接显示明文 |
+| Linux 桌面 | 普通文件权限；受沙箱限制的 GUI 使用对应桌面文件选择机制 | Secret Service；锁定或需要 Prompt 时返回明确状态，不自动显示提示 | 依赖实际桌面和认证机制，尚未确定与实现，不承诺统一的生物识别入口 |
+| Linux 无桌面 | 当前用户的文件权限 | 不假定存在 D-Bus 凭据服务；先使用密钥/ssh-agent，不自动换成明文文件 | 没有可信的用户确认机制时，不开放明文查看/导出 |
+
+上述表格包含产品方向，**不是三平台均已实现的声明**。macOS 的无弹窗存取已实测；Linux 密码后端暂未开放，Windows 客户端未实现。独立 Agent 授权与明文查看功能在三平台均尚未实现。
+
+依据：[Windows CredRead](https://learn.microsoft.com/en-us/windows/win32/api/wincred/nf-wincred-credreadw)、[Secret Service 的锁定行为](https://specifications.freedesktop.org/secret-service/latest/unlocking.html)、[Secret Service 的提示流程](https://specifications.freedesktop.org/secret-service/latest/prompts.html)。
 
 ## 开始使用
 
@@ -111,7 +142,7 @@ MFA、keyboard-interactive、硬件密钥确认和 sudo 密码不会自动填入
 
 直接引用 `ssh-manager-core`，使用 `Store`、`Host`、`OpenSsh`、`ExecutionOptions` 和 `OperationResult`。凭据通过 `CredentialStore` trait 注入，可复用调用方的授权与安全存储。核心不依赖 CLI 参数解析、MCP、全局异步运行时或 PairDock。
 
-系统凭据和 askpass 的默认适配需要一个配套 CLI 路径；嵌入应用传入安装的 `ssh-manager`，核心不会假设宿主应用能充当认证助手。可运行示例验证这种集成：
+默认集成包含两个独立入口：`SystemCredentials.helper_executable` 指向 `ssh-manager-credentials`，`OpenSsh.askpass_executable` 指向 `ssh-manager`。核心不会假设宿主应用能充当认证助手，也不会改变宿主进程的钥匙串交互设置。可运行示例验证这种集成：
 
 ```sh
 cargo run -p ssh-manager-core --example check -- /absolute/path/to/ssh-manager vm
@@ -146,3 +177,5 @@ python3 scripts/verify_vm.py --binary target/release/ssh-manager --host vm
 Git 中除 README 外不保存设计文档、skill 说明或验证报告；这些本机材料放在 `.local`。
 
 本次 macOS → Ubuntu VM 验证：**10 项核心测试、26 项实机场景通过**。实机覆盖密码、加密密钥口令、ssh-agent、密码跳板、工作目录与上下文、退出码 255、超时与取消、会话中断、大输出截断、特殊文件名的二进制往返校验、重复目录上传、MCP 执行/取消/关闭及主机信任变化。验证为有限时长操作，不代表后台任务恢复或跨平台验收完成。
+
+凭据交互的补充验证：一次性钥匙串锁定后立即失败且不请求交互；原生凭据读写、连续读取、缺失凭据、更换 CLI 签名身份后复用绑定等 **7 项凭据检查通过**。重复安装与普通 CLI/核心更新后，已安装凭据组件的哈希和修改时间保持不变。可运行 `python3 scripts/verify_credentials.py --binary /absolute/path/to/ssh-manager` 复现本机检查。

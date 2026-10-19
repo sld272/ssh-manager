@@ -162,7 +162,7 @@ fn invoke(root: PathBuf, name: &str, arguments: Value, cancel: Arc<AtomicBool>) 
         reason: a.reason,
     };
     let credentials = SystemCredentials {
-        helper_executable: std::env::current_exe()?,
+        helper_executable: crate::credential_helper()?,
     };
     let ssh = OpenSsh {
         store: &store,

@@ -20,17 +20,37 @@ pub trait CredentialStore {
     fn set(&self, reference: &str, secret: &str) -> Result<()>;
     fn delete(&self, reference: &str) -> Result<()>;
 }
-/// A separate invocation of the bundled CLI isolates native keychain UI policy from embedding applications.
+/// A dedicated executable isolates keychain policy and identity from the CLI and embedding applications.
 pub struct SystemCredentials {
     pub helper_executable: PathBuf,
 }
 impl SystemCredentials {
+    #[cfg(target_os = "linux")]
+    fn invoke(
+        &self,
+        _reference: &str,
+        _action: &str,
+        _input: Option<Vec<u8>>,
+    ) -> Result<Zeroizing<String>> {
+        // On a Linux desktop with a locked collection, keyring's current Secret Service adapter calls Unlock and Prompt automatically.
+        Err(Error::new(
+            "credential_backend_not_ready",
+            "此平台的密码存储尚未开放，请使用密钥文件或 ssh-agent",
+        ))
+    }
+    #[cfg(target_os = "macos")]
     fn invoke(
         &self,
         reference: &str,
         action: &str,
         input: Option<Vec<u8>>,
     ) -> Result<Zeroizing<String>> {
+        // Installing only the CLI omits this file; fail only when a credential is actually requested.
+        crate::error::require(
+            self.helper_executable.is_file(),
+            "credential_helper_missing",
+            "未找到凭据组件，请一同安装 ssh-manager-credentials",
+        )?;
         let mut command = std::process::Command::new(&self.helper_executable);
         command
             .env("SSH_MANAGER_CREDENTIAL_HELPER", reference)
@@ -44,12 +64,23 @@ impl SystemCredentials {
             None,
         )?;
         // A locked keychain or an executable whose access was revoked must fail within five seconds, without opening a dialog.
-        if output.termination.is_some() || output.code != Some(0) {
+        if output.termination.is_some() {
             output.stdout.bytes.zeroize();
             return Err(Error::new(
-                "credential_backend_unavailable",
-                "无法访问系统凭据，请解锁并授权访问，或重新绑定凭据",
+                "credential_backend_timeout",
+                "系统凭据访问超时，请稍后重试",
             ));
+        }
+        if output.code != Some(0) {
+            output.stdout.bytes.zeroize();
+            let failure: CredentialFailure = serde_json::from_slice(&output.stderr.bytes)?;
+            // A locked keychain returns credential_access_required; show the user how to recover, not the helper's policy details.
+            let message = if failure.code == "credential_access_required" {
+                "暂时无法读取已保存的凭据，请在本机解锁凭据存储或重新绑定".to_owned()
+            } else {
+                failure.message
+            };
+            return Err(Error::new(&failure.code, message));
         }
         let bytes = Zeroizing::new(output.stdout.bytes);
         let text = std::str::from_utf8(&bytes).map_err(|_| {
@@ -80,17 +111,11 @@ impl CredentialStore for SystemCredentials {
         Ok(())
     }
 }
-fn credential_error(e: keyring::Error) -> Error {
-    // A saved reference whose Keychain item was manually deleted is unavailable, not a login rejection.
-    match e {
-        keyring::Error::NoEntry => {
-            Error::new("credential_unavailable", "未找到保存的凭据，请重新绑定")
-        }
-        _ => Error::new(
-            "credential_backend_unavailable",
-            "无法访问系统凭据存储，请检查是否已解锁并允许访问",
-        ),
-    }
+#[cfg(target_os = "macos")]
+#[derive(Deserialize)]
+struct CredentialFailure {
+    code: String,
+    message: String,
 }
 #[derive(Serialize, Deserialize)]
 struct Request {
@@ -220,58 +245,5 @@ pub fn askpass(prompt: &str) -> Result<()> {
         "此次认证需要用户操作",
     )?;
     std::io::stdout().write_all(&secret)?;
-    Ok(())
-}
-
-/// Called only in a short-lived credential helper. stdout is consumed privately by SystemCredentials.
-pub fn system_credential_helper(reference: &str) -> Result<()> {
-    #[cfg(target_os = "macos")]
-    let _no_ui =
-        security_framework::os::macos::keychain::SecKeychain::disable_user_interaction()
-            .map_err(|_| Error::new("credential_backend_unavailable", "无法设置凭据访问方式"))?;
-    let entry = keyring::Entry::new("dev.ssh-manager", reference).map_err(credential_error)?;
-    match std::env::var("SSH_MANAGER_CREDENTIAL_ACTION").as_deref() {
-        Ok("get") => {
-            let secret = Zeroizing::new(entry.get_password().map_err(credential_error)?);
-            std::io::stdout().write_all(secret.as_bytes())?;
-        }
-        Ok("set") => {
-            let mut secret = Zeroizing::new(String::new());
-            std::io::stdin().take(65537).read_to_string(&mut secret)?;
-            crate::error::require(secret.len() <= 65536, "invalid_credential", "凭据过长")?;
-            entry.set_password(&secret).map_err(credential_error)?;
-        }
-        Ok("delete") => {
-            #[cfg(target_os = "macos")]
-            {
-                match security_framework::passwords::delete_generic_password(
-                    "dev.ssh-manager",
-                    reference,
-                ) {
-                    Ok(()) => {}
-                    Err(e) if e.code() == -25300 => {}
-                    Err(_) => {
-                        return Err(Error::new(
-                            "credential_backend_unavailable",
-                            "无法删除系统凭据",
-                        ));
-                    }
-                }
-            }
-            #[cfg(target_os = "linux")]
-            {
-                match entry.delete_credential() {
-                    Ok(()) | Err(keyring::Error::NoEntry) => {}
-                    Err(e) => return Err(credential_error(e)),
-                }
-            }
-        }
-        _ => {
-            return Err(Error::new(
-                "invalid_credential_operation",
-                "不支持此凭据操作",
-            ));
-        }
-    }
     Ok(())
 }
