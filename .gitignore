@@ -1,0 +1,13 @@
+/target/
+/.local/
+.DS_Store
+
+# Keep local plans, notes and generated documents out of version control.
+*.md
+*.mdx
+!README.md
+!README.*.md
+*.pdf
+*.docx
+*.pptx
+*.pptd
