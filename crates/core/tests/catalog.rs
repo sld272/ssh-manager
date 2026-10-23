@@ -369,3 +369,34 @@ fn hosts_naming_no_key_import_as_password_unless_keys_are_required() {
     // Default keys that exist on this machine are kept next to the agent.
     assert!(!matches!(auth("agent"), Authentication::Password { .. }));
 }
+#[test]
+fn reachability_probe_wants_an_ssh_server() {
+    use std::{io::Write, net::TcpListener};
+    let serve = |greeting: &'static [u8]| {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.write_all(greeting).unwrap();
+            std::thread::sleep(Duration::from_millis(200));
+        });
+        port
+    };
+    let timeout = Duration::from_secs(2);
+    assert!(reach::probe(
+        "127.0.0.1",
+        serve(b"SSH-2.0-OpenSSH_9.9\r\n"),
+        timeout
+    ));
+    assert!(!reach::probe(
+        "127.0.0.1",
+        serve(b"HTTP/1.1 400 Bad Request\r\n"),
+        timeout
+    ));
+    let closed = TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    assert!(!reach::probe("127.0.0.1", closed, timeout));
+}

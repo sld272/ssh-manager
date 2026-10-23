@@ -5,6 +5,7 @@ pub mod error;
 pub mod importer;
 pub mod model;
 pub mod process;
+pub mod reach;
 pub mod ssh;
 pub mod store;
 pub mod transfer;
