@@ -12,7 +12,7 @@ function open(content) {
 
 function head(title, subtitle, tone = '', iconName = 'shield') {
   return h('div', { class: 'dialog-head' },
-    h('div', { class: `dialog-icon ${tone}` }, icon(iconName, 20)),
+    h('div', { class: `dialog-icon ${tone}` }, icon(iconName, 17)),
     h('div', { class: 'grow stack', style: 'gap: 4px' },
       h('h2', { class: 'dialog-title' }, title),
       subtitle && h('p', { class: 'muted' }, subtitle)),
@@ -114,7 +114,7 @@ export function addHostDialog(onDone) {
     iconName: 'server',
     fields: h('div', { class: 'stack', style: 'gap: 14px' },
       h('div', { class: 'field-row' }, field('名称', name), field('登录用户', user)),
-      h('div', { class: 'field-row' }, field('地址', addr), h('label', { class: 'field', style: 'flex: 0 0 110px' }, h('span', null, '端口'), port)),
+      h('div', { class: 'field-row port' }, field('地址', addr), field('端口', port)),
       h('div', { class: 'field' }, h('span', null, '登录方式'), seg),
       keyField,
       field('说明', description),

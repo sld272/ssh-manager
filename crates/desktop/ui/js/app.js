@@ -137,9 +137,9 @@ const actions = {
 
 function navItem(view, label, iconName, extra) {
   return h('button', {
-    type: 'button', class: 'nav-item', 'aria-current': state.view === view ? 'page' : null,
+    type: 'button', class: 'nav-item', title: label, 'aria-current': state.view === view ? 'page' : null,
     onclick: () => actions.navigate(view),
-  }, icon(iconName, 16), h('span', { class: 'grow' }, label), extra);
+  }, icon(iconName, 15), h('span', { class: 'grow label ellipsis' }, label), extra);
 }
 
 function hostFilters() {
@@ -149,13 +149,13 @@ function hostFilters() {
   for (const v of hosts) counts[source(v)] = (counts[source(v)] ?? 0) + 1;
   const tags = [...new Set(hosts.flatMap((v) => v.tags))].sort();
   return [
-    h('div', { class: 'nav-group' },
+    h('div', { class: 'nav-group nav-filters' },
       h('div', { class: 'nav-label' }, '来源'),
       Object.entries(counts).map(([key, count]) => h('button', {
-        type: 'button', class: 'nav-item sub', 'aria-pressed': String(state.filter.source === key),
+        type: 'button', class: 'nav-item', 'aria-pressed': String(state.filter.source === key),
         onclick: () => { state.filter.source = state.filter.source === key ? null : key; render(); },
       }, h('span', { class: 'grow' }, SOURCES[key]), h('span', { class: 'nav-count' }, count)))),
-    tags.length > 0 && h('div', { class: 'stack', style: 'gap: 8px' },
+    tags.length > 0 && h('div', { class: 'stack nav-filters', style: 'gap: 6px' },
       h('div', { class: 'nav-label', style: 'padding-bottom: 0' }, '标签'),
       h('div', { class: 'tag-list' }, tags.map((tag) => h('button', {
         type: 'button', class: 'tag', 'aria-pressed': String(state.filter.tag === tag),
@@ -168,8 +168,10 @@ function nav() {
   const o = state.overview;
   const running = state.running.size;
   const ready = o && o.ssh_version && o.credential_helper_available;
+  const footText = [o?.credential_helper_available ? '凭据存储可用' : '未找到凭据组件', o?.ssh_version ?? '未找到 OpenSSH'].join(' · ');
   return h('nav', { class: 'nav', 'aria-label': '主导航' },
-    h('div', { class: 'brand' }, h('span', { class: 'brand-mark' }, icon('terminal', 16, 2)), 'ssh-manager'),
+    // The window's traffic lights sit here; the strip also drags the window.
+    h('div', { class: 'nav-top', 'data-tauri-drag-region': true }),
     h('div', { class: 'nav-group' },
       navItem('hosts', '主机', 'server', o && h('span', { class: 'nav-count' }, o.hosts.length)),
       navItem('activity', '活动', 'activity', running > 0 && h('span', { class: 'nav-badge' }, `${running} 进行中`)),
@@ -177,12 +179,9 @@ function nav() {
       navItem('import', '导入', 'import')),
     state.view === 'hosts' && hostFilters(),
     state.view === 'activity' && activityNav(state, actions),
-    o && h('div', { class: 'nav-foot' },
+    o && h('div', { class: 'nav-foot', title: footText },
       h('span', { class: `dot ${ready ? 'ok' : 'warn'}` }),
-      h('span', null, [
-        o.credential_helper_available ? '凭据存储可用' : '未找到凭据组件',
-        o.ssh_version ?? '未找到 OpenSSH',
-      ].join(' · '))));
+      h('span', { class: 'label' }, footText)));
 }
 
 function content() {
@@ -201,11 +200,18 @@ function content() {
   }
 }
 
+// Each pane scrolls on its own; a refresh must not jump any of them back to the top.
+const PANES = ['.nav', '.host-list', '.host-detail', '.main-body'];
 function render() {
   const app = document.getElementById('app');
-  const scroll = document.scrollingElement.scrollTop;
+  const sameView = app.dataset.view === state.view;
+  const scroll = PANES.map((selector) => app.querySelector(selector)?.scrollTop ?? 0);
   replace(app, h('div', { class: 'app' }, nav(), content()));
-  document.scrollingElement.scrollTop = scroll;
+  app.dataset.view = state.view;
+  PANES.forEach((selector, i) => {
+    const pane = app.querySelector(selector);
+    if (pane && (sameView || selector === '.nav')) pane.scrollTop = scroll[i];
+  });
 }
 
 // Agents and the CLI change the same catalog; pick up their work while the window is idle.

@@ -10,10 +10,16 @@
     "windows": [
       {
         "title": "ssh-manager",
-        "width": 1280,
-        "height": 860,
-        "minWidth": 920,
-        "minHeight": 600
+        "width": 1000,
+        "height": 660,
+        "minWidth": 760,
+        "minHeight": 520,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 18,
+          "y": 20
+        }
       }
     ],
     "security": {
@@ -22,7 +28,11 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app"],
-    "icon": ["icons/icon.png"]
+    "targets": [
+      "app"
+    ],
+    "icon": [
+      "icons/icon.png"
+    ]
   }
 }

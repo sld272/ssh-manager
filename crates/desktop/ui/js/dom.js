@@ -68,6 +68,19 @@ export function icon(name, size = 16, stroke = 1.8) {
   return svg;
 }
 
+// A view: a toolbar that also drags the window (the title bar is hidden), then the view's own panes.
+export function screen({ title, sub, tools, body, footer }) {
+  const drag = { 'data-tauri-drag-region': true };
+  return h('div', { class: 'main' },
+    h('header', { class: 'toolbar', ...drag },
+      h('h1', { class: 'toolbar-title', ...drag }, title),
+      sub && h('span', { class: 'toolbar-sub', ...drag }, sub),
+      h('div', { class: 'spacer', ...drag }),
+      tools),
+    body,
+    footer);
+}
+
 export function toast(message) {
   const box = document.getElementById('toast');
   const item = h('div', null, message);
