@@ -291,10 +291,11 @@ details summary { cursor: pointer; font-weight: 600; font-size: 12px; }
 .can-list li { display: flex; gap: 8px; align-items: center; }
 
 /* Settings */
-.settings { max-width: 640px; gap: 20px; }
+.settings { gap: 20px; }
 .settings-group { display: flex; flex-direction: column; gap: 8px; }
 .settings-card > * + * { border-top: 1px solid var(--divider); }
-.setting-row { display: flex; align-items: center; gap: 16px; padding: 10px 14px; min-height: 48px; }
+.setting-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 10px 14px; min-height: 48px; }
+.setting-row > .grow { flex: 1 1 200px; }
 .setting-row .stack { gap: 2px; }
 .select { height: 28px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--ink); }
 
