@@ -12,7 +12,7 @@ ssh-manager 把服务器、登录方式、凭据和项目说明集中管理。ag
 - **为 agent 设计**：所有命令都有 JSON 输出，另有本地 MCP 服务提供同样的能力。结果会明确区分成功、失败和结果未知。
 - **主机上下文**：项目路径、用途说明和 agent 记录随主机一起保存，新会话可以接着上次的进度。
 
-> 状态：早期开发中。已在 macOS 客户端连接 Linux 服务器的环境下实测。Linux 客户端暂不支持保存密码（密钥和 ssh-agent 可用）。Windows 和图形界面尚未推出。
+> 状态：早期开发中。已在 macOS 客户端连接 Linux 服务器的环境下实测。Linux 客户端暂不支持保存密码（密钥和 ssh-agent 可用）。暂不支持 Windows，桌面端是第一个预览版。
 
 ## 安装
 
@@ -60,6 +60,15 @@ ssh-manager exec web --project blog -- 'docker compose ps'
 导入预览会列出哪些选项已导入、哪些因为无关被忽略（比如 `UseKeychain`）、哪些需要你处理。`Match` 条件块不会被执行。有待处理问题的主机不能直接使用，处理完后用 `host edit NAME --clear-issues` 确认。
 
 任何命令加上 `--json` 都会输出结构化结果。其他功能见 `ssh-manager --help`，包括同一主机配置多个登录方式、跳板机、指定 agent 套接字（1Password、Secretive）、`history` 和 `export`/`restore`。
+
+## 桌面端
+
+基于 Tauri 的桌面应用，与 CLI、MCP 共用同一个主机库。可以查看主机、连接路径、信任与登录状态、项目路径和 agent 记录，以及操作记录；也可以从 `~/.ssh/config` 导入、核对服务器指纹、保存密码，并查看接入 agent 的方式。
+
+```sh
+scripts/install.sh                      # 桌面端使用已安装的凭据组件
+cargo run --release -p ssh-manager-desktop
+```
 
 ## 接入 agent
 

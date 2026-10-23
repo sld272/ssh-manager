@@ -173,6 +173,31 @@ pub fn bind(
         previous_pending_cleanup: previous.filter(|r| credentials.delete(r).is_err()),
     })
 }
+fn references(h: &crate::Host) -> Vec<String> {
+    h.connections
+        .iter()
+        .filter_map(|c| match &c.authentication {
+            Authentication::Password { credential_ref } => credential_ref.clone(),
+            Authentication::Key { passphrase_ref, .. } => passphrase_ref.clone(),
+            Authentication::Agent => None,
+        })
+        .collect()
+}
+/// Removes the host, then deletes its saved secrets that no remaining host references.
+/// Returns the removed host and the references the credential store could not delete.
+pub fn remove_host(
+    store: &crate::Store,
+    credentials: &dyn CredentialStore,
+    host: &str,
+) -> Result<(crate::Host, Vec<String>)> {
+    let h = store.remove(host)?;
+    let remaining: Vec<_> = store.list()?.iter().flat_map(references).collect();
+    let pending = references(&h)
+        .into_iter()
+        .filter(|r| !remaining.contains(r) && credentials.delete(r).is_err())
+        .collect();
+    Ok((h, pending))
+}
 #[cfg(target_os = "macos")]
 #[derive(Deserialize)]
 struct CredentialFailure {

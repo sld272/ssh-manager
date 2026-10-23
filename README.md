@@ -12,7 +12,7 @@ ssh-manager keeps your servers, logins, credentials and project notes in one pla
 - **Built for agents.** Every command has JSON output, and a local MCP server exposes the same features. Results report clearly whether a command succeeded, failed, or has an unknown outcome.
 - **Context for each host.** Project paths, descriptions and agent notes are saved with each host, so a new session can pick up where the last one left off.
 
-> Status: early development. Verified on a macOS client against Linux servers. On Linux clients, password storage is not available yet (keys and ssh-agent work). Windows and the GUI are not available yet. CLI messages are currently in Chinese.
+> Status: early development. Verified on a macOS client against Linux servers. On Linux clients, password storage is not available yet (keys and ssh-agent work). Windows is not supported yet, and the desktop app is a first preview. CLI and app text is currently in Chinese.
 
 ## Install
 
@@ -60,6 +60,15 @@ ssh-manager exec web --project blog -- 'docker compose ps'
 The import preview shows which options were imported, which were ignored as irrelevant (such as `UseKeychain`), and which need your attention. `Match` blocks are never executed. Hosts with open issues won't run until you fix them and confirm with `host edit NAME --clear-issues`.
 
 Add `--json` to any command for structured output. See `ssh-manager --help` for everything else, including multiple logins per host, jump hosts, custom agent sockets (1Password, Secretive), `history` and `export`/`restore`.
+
+## Desktop app
+
+A Tauri desktop app shares the same catalog as the CLI and MCP server. It shows your hosts, connection paths, trust and login status, project paths and agent notes, plus the operation history. You can also import from `~/.ssh/config`, confirm server fingerprints, save passwords, and see how to connect agents.
+
+```sh
+scripts/install.sh                      # the app uses the installed credentials helper
+cargo run --release -p ssh-manager-desktop
+```
 
 ## Use with agents
 

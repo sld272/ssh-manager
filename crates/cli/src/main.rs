@@ -375,16 +375,6 @@ fn jumps(store: &Store, names: &[String]) -> Result<Vec<uuid::Uuid>> {
         .map(|name| Ok(store.host(name)?.default_connection))
         .collect()
 }
-fn credential_refs(h: &Host) -> Vec<String> {
-    h.connections
-        .iter()
-        .filter_map(|c| match &c.authentication {
-            Authentication::Password { credential_ref } => credential_ref.clone(),
-            Authentication::Key { passphrase_ref, .. } => passphrase_ref.clone(),
-            _ => None,
-        })
-        .collect()
-}
 fn selected_index(h: &Host, selector: Option<&str>) -> Result<usize> {
     let id = h.connection(selector)?.id;
     Ok(h.connections
@@ -506,18 +496,7 @@ fn dispatch(cli: &Cli, cancel: Arc<AtomicBool>) -> Result<Value> {
                 to_value(h)
             }
             HostCommand::Remove { host } => {
-                let h = store.remove(host)?;
-                let remaining = store
-                    .list()?
-                    .iter()
-                    .flat_map(credential_refs)
-                    .collect::<Vec<_>>();
-                let mut cleanup = vec![];
-                for reference in credential_refs(&h) {
-                    if !remaining.contains(&reference) && credentials.delete(&reference).is_err() {
-                        cleanup.push(reference);
-                    }
-                }
+                let (h, cleanup) = credentials::remove_host(&store, &credentials, host)?;
                 Ok(json!({"removed":h.name,"id":h.id,"credentials_pending_cleanup":cleanup}))
             }
             HostCommand::Import {

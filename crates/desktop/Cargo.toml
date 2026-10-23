@@ -1,0 +1,18 @@
+[package]
+name = "ssh-manager-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+ssh-manager-core = { path = "../core" }
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+zeroize.workspace = true
+tauri = { version = "2", features = [] }
