@@ -104,7 +104,13 @@ fn tools() -> Vec<Value> {
         ),
     ]
 }
-fn invoke(root: PathBuf, name: &str, arguments: Value, cancel: Arc<AtomicBool>) -> Result<Value> {
+fn invoke(
+    root: PathBuf,
+    name: &str,
+    arguments: Value,
+    cancel: Arc<AtomicBool>,
+    caller: String,
+) -> Result<Value> {
     let definition = tools()
         .into_iter()
         .find(|t| t["name"] == name)
@@ -158,7 +164,7 @@ fn invoke(root: PathBuf, name: &str, arguments: Value, cancel: Arc<AtomicBool>) 
         timeout: Duration::from_secs(timeout),
         output_limit,
         cancel,
-        caller: "mcp".into(),
+        caller,
         reason: a.reason,
     };
     let credentials = SystemCredentials {
@@ -229,6 +235,13 @@ fn invoke(root: PathBuf, name: &str, arguments: Value, cancel: Arc<AtomicBool>) 
     };
     Ok(serde_json::to_value(result)?)
 }
+/// The operation history shows which client acted, e.g. "claude-code"; a name with control characters or
+/// over 64 bytes would make that column unreadable, so it falls back to "mcp".
+fn client_name(name: &str) -> Option<String> {
+    let name = name.trim();
+    (!name.is_empty() && name.len() <= 64 && !name.chars().any(char::is_control))
+        .then(|| name.to_owned())
+}
 fn send(output: &Arc<Mutex<std::io::Stdout>>, v: Value) -> Result<()> {
     let mut out = output
         .lock()
@@ -258,6 +271,7 @@ pub fn serve(root: PathBuf, shutdown: Arc<AtomicBool>) -> Result<()> {
     let jobs: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>> = Arc::new(Mutex::new(HashMap::new()));
     let mut workers = vec![];
     let mut initialized = false;
+    let mut caller = String::from("mcp");
     let mut ready = false;
     let (sender, receiver) = std::sync::mpsc::sync_channel(16);
     std::thread::spawn(move || {
@@ -322,6 +336,12 @@ pub fn serve(root: PathBuf, shutdown: Arc<AtomicBool>) -> Result<()> {
                     continue;
                 }
                 initialized = true;
+                if let Some(name) = request["params"]["clientInfo"]["name"]
+                    .as_str()
+                    .and_then(client_name)
+                {
+                    caller = name;
+                }
                 send(
                     &output,
                     response(
@@ -361,11 +381,12 @@ pub fn serve(root: PathBuf, shutdown: Arc<AtomicBool>) -> Result<()> {
                     running.insert(key.clone(), cancel.clone());
                 }
                 let root = root.clone();
+                let caller = caller.clone();
                 let output = output.clone();
                 let jobs = jobs.clone();
                 workers.retain(|w: &std::thread::JoinHandle<()>| !w.is_finished());
                 workers.push(std::thread::spawn(move || {
-                    let result = match invoke(root, &name, args, cancel) {
+                    let result = match invoke(root, &name, args, cancel, caller) {
                         Ok(v) => {
                             let failed = v
                                 .get("status")

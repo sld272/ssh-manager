@@ -615,11 +615,21 @@ fn dispatch(cli: &Cli, cancel: Arc<AtomicBool>) -> Result<Value> {
                 passphrase,
                 password_stdin,
             } => {
-                let mut h = store.host(host)?;
-                let i = selected_index(&h, connection.as_deref())?;
+                let purpose = if *passphrase {
+                    credentials::SecretPurpose::KeyPassphrase
+                } else {
+                    credentials::SecretPurpose::LoginPassword
+                };
+                // Reject a passphrase for a password login before prompting for it.
                 if *passphrase {
                     error::require(
-                        matches!(h.connections[i].authentication, Authentication::Key { .. }),
+                        matches!(
+                            store
+                                .host(host)?
+                                .connection(connection.as_deref())?
+                                .authentication,
+                            Authentication::Key { .. }
+                        ),
                         "key_required",
                         "请先为此登录配置选择密钥文件",
                     )?;
@@ -644,29 +654,16 @@ fn dispatch(cli: &Cli, cancel: Arc<AtomicBool>) -> Result<Value> {
                         "登录密码："
                     })?)
                 };
-                let previous = match &h.connections[i].authentication {
-                    Authentication::Password { credential_ref } => credential_ref.clone(),
-                    Authentication::Key { passphrase_ref, .. } => passphrase_ref.clone(),
-                    _ => None,
-                };
-                let reference = uuid::Uuid::new_v4().to_string();
-                credentials.set(&reference, &secret)?;
-                if *passphrase {
-                    if let Authentication::Key { passphrase_ref, .. } =
-                        &mut h.connections[i].authentication
-                    {
-                        *passphrase_ref = Some(reference);
-                    }
-                } else {
-                    h.connections[i].authentication = Authentication::Password {
-                        credential_ref: Some(reference),
-                    };
-                }
-                store.save(&h)?;
-                let pending_cleanup =
-                    previous.filter(|reference| credentials.delete(reference).is_err());
+                let r = credentials::bind(
+                    &store,
+                    &credentials,
+                    host,
+                    connection.as_deref(),
+                    purpose,
+                    &secret,
+                )?;
                 Ok(
-                    json!({"previous_credential_pending_cleanup":pending_cleanup,"saved":true,"host_id":h.id,"connection_id":h.connections[i].id,"purpose":if *passphrase{"key_passphrase"}else{"login_password"}}),
+                    json!({"previous_credential_pending_cleanup":r.previous_pending_cleanup,"saved":true,"host_id":r.host_id,"connection_id":r.connection_id,"purpose":r.purpose}),
                 )
             }
             CredentialCommand::Remove { host, connection } => {

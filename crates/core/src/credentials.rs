@@ -111,6 +111,68 @@ impl CredentialStore for SystemCredentials {
         Ok(())
     }
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretPurpose {
+    LoginPassword,
+    KeyPassphrase,
+}
+#[derive(Debug, Serialize)]
+pub struct BindReceipt {
+    pub host_id: uuid::Uuid,
+    pub connection_id: uuid::Uuid,
+    pub purpose: SecretPurpose,
+    /// The replaced entry, when the credential store could not delete it.
+    pub previous_pending_cleanup: Option<String>,
+}
+/// Saves the secret under a new reference, points the connection at it, then deletes the replaced entry.
+pub fn bind(
+    store: &crate::Store,
+    credentials: &dyn CredentialStore,
+    host: &str,
+    connection: Option<&str>,
+    purpose: SecretPurpose,
+    secret: &str,
+) -> Result<BindReceipt> {
+    let mut h = store.host(host)?;
+    let id = h.connection(connection)?.id;
+    let c = h
+        .connections
+        .iter_mut()
+        .find(|c| c.id == id)
+        .expect("selected connection belongs to host");
+    if purpose == SecretPurpose::KeyPassphrase {
+        crate::error::require(
+            matches!(c.authentication, Authentication::Key { .. }),
+            "key_required",
+            "请先为此登录配置选择密钥文件",
+        )?;
+    }
+    let previous = match &c.authentication {
+        Authentication::Password { credential_ref } => credential_ref.clone(),
+        Authentication::Key { passphrase_ref, .. } => passphrase_ref.clone(),
+        Authentication::Agent => None,
+    };
+    let reference = uuid::Uuid::new_v4().to_string();
+    credentials.set(&reference, secret)?;
+    match (&mut c.authentication, purpose) {
+        (Authentication::Key { passphrase_ref, .. }, SecretPurpose::KeyPassphrase) => {
+            *passphrase_ref = Some(reference)
+        }
+        (authentication, _) => {
+            *authentication = Authentication::Password {
+                credential_ref: Some(reference),
+            }
+        }
+    }
+    store.save(&h)?;
+    Ok(BindReceipt {
+        host_id: h.id,
+        connection_id: id,
+        purpose,
+        previous_pending_cleanup: previous.filter(|r| credentials.delete(r).is_err()),
+    })
+}
 #[cfg(target_os = "macos")]
 #[derive(Deserialize)]
 struct CredentialFailure {
