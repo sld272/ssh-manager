@@ -1,6 +1,8 @@
 /target/
 # Local design notes, verification reports and downloaded tools.
 /.local/
+# Local agent instructions.
+/AGENTS.md
 .DS_Store
 __pycache__/
 *.pyc
