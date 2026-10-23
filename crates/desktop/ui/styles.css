@@ -173,6 +173,14 @@ h1, h2, h3, p { margin: 0; }
 .input, .textarea { width: 100%; height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--surface); outline: none; }
 .textarea { height: auto; min-height: 72px; padding: 8px 10px; resize: vertical; }
 .input:focus, .textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.tag-editor { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; min-height: 30px; padding: 4px 6px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--surface); cursor: text; }
+.tag-editor:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.tag-chip { display: inline-flex; align-items: center; gap: 2px; font-size: 12px; line-height: 20px; padding: 0 2px 0 8px; }
+.chip-remove { width: 16px; height: 16px; border: 0; padding: 0; border-radius: 999px; background: transparent; color: var(--text3); display: inline-flex; align-items: center; justify-content: center; }
+.chip-remove:hover { background: var(--hover); color: var(--ink); }
+.tag-input { flex: 1 1 80px; min-width: 80px; height: 20px; border: 0; padding: 0 2px; background: transparent; outline: none; }
+.key-file { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 4px 0 10px; border-radius: 8px; border: 1px solid var(--border); color: var(--text2); }
+.key-file .mono { color: var(--ink); font-size: 12px; }
 .field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 .field > span { font-size: 12px; font-weight: 600; color: var(--text3); }
 .field-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }

@@ -8,6 +8,7 @@ fn main() {
         std::process::exit(if ok { 0 } else { 1 });
     }
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             commands::overview,
             commands::history,
@@ -27,6 +28,7 @@ fn main() {
             commands::settings_set,
             commands::reveal_data_dir,
             commands::open_terminal,
+            commands::pick_key_file,
         ])
         .run(tauri::generate_context!())
         .expect("ssh-manager could not start its window");

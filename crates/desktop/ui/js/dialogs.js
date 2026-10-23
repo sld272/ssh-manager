@@ -89,10 +89,64 @@ export function credentialDialog(view, purpose, onDone) {
   });
 }
 
-const splitTags = (text) => text.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean);
+// Tags show as chips: Enter adds the typed tag, the × on a chip removes it.
+function tagEditor(initial) {
+  const tags = [...initial];
+  const input = h('input', { class: 'tag-input', placeholder: t('输入后按回车添加'), 'aria-label': t('添加标签') });
+  const box = h('div', { class: 'tag-editor', onclick: (e) => { if (e.target === box) input.focus(); } });
+  const add = () => {
+    const tag = input.value.trim();
+    if (tag && !tags.includes(tag)) tags.push(tag);
+    input.value = '';
+    draw();
+  };
+  // Redrawing moves the input, which drops its focus.
+  const redraw = () => { draw(); input.focus(); };
+  function draw() {
+    replace(box,
+      tags.map((tag) => h('span', { class: 'chip tag-chip' }, tag, h('button', {
+        type: 'button', class: 'chip-remove', 'aria-label': t('删除标签 {tag}', { tag }),
+        onclick: () => { tags.splice(tags.indexOf(tag), 1); redraw(); },
+      }, icon('x', 10, 2.2)))),
+      input);
+  }
+  input.addEventListener('keydown', (e) => {
+    // Enter while a Chinese input method is composing only confirms the characters.
+    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); add(); input.focus(); }
+    if (e.key === 'Backspace' && !input.value && tags.length) { tags.pop(); redraw(); }
+  });
+  draw();
+  // A tag typed but not yet confirmed with Enter still counts when the form is saved.
+  return { el: box, values: () => { add(); return tags; } };
+}
+
+// Key files are chosen in Finder; imported hosts can list several.
+function keyFiles(initial) {
+  const paths = [...initial];
+  const list = h('div', { class: 'stack', style: 'gap: 6px' });
+  function draw() {
+    replace(list,
+      paths.map((path) => h('div', { class: 'key-file' },
+        icon('key', 13),
+        h('span', { class: 'mono grow ellipsis', title: path }, path),
+        h('button', {
+          type: 'button', class: 'icon-btn', 'aria-label': t('移除 {path}', { path }), title: t('移除'),
+          onclick: () => { paths.splice(paths.indexOf(path), 1); draw(); },
+        }, icon('x', 12)))),
+      h('button', {
+        type: 'button', class: 'btn btn-sm', style: 'align-self: flex-start',
+        onclick: async () => {
+          const path = await api.pickKeyFile().catch((e) => { toast(message(e)); return null; });
+          if (path && !paths.includes(path)) { paths.push(path); draw(); }
+        },
+      }, icon('folder', 13), t(paths.length ? '添加密钥文件…' : '选择密钥文件…')));
+  }
+  draw();
+  return { el: list, values: () => paths };
+}
 
 // The add and edit forms share their fields; `view` is the host being edited.
-function hostDialog(view, { title, subtitle, submitLabel, save }) {
+function hostDialog(view, { title, subtitle, submitLabel, save, done }) {
   const c = view && defaultConnection(view);
   const a = c?.authentication;
   let auth = a?.kind ?? 'key';
@@ -100,15 +154,16 @@ function hostDialog(view, { title, subtitle, submitLabel, save }) {
   const addr = h('input', { class: 'input', required: true, placeholder: t('example.com 或 IP 地址'), value: c?.address });
   const user = h('input', { class: 'input', required: true, placeholder: 'deploy', value: c?.user });
   const port = h('input', { class: 'input', type: 'number', min: 1, max: 65535, required: true, value: c?.port ?? 22 });
-  // Imported hosts can list several key files; they get one line each.
-  const paths = a?.kind === 'key' ? a.paths : ['~/.ssh/id_ed25519'];
-  const keyPath = paths.length > 1
-    ? h('textarea', { class: 'textarea mono', rows: paths.length, spellcheck: 'false' })
-    : h('input', { class: 'input mono', placeholder: '~/.ssh/id_ed25519', spellcheck: 'false' });
-  keyPath.value = paths.join('\n');
-  const keyField = field(t('密钥文件'), keyPath);
+  const keys = keyFiles(a?.kind === 'key' ? a.paths : []);
+  const keyField = h('div', { class: 'field' }, h('span', null, t('密钥文件')), keys.el);
+  const saved = a?.kind === 'password' && !!a.credential_ref;
+  const password = h('input', {
+    class: 'input', type: 'password', autocomplete: 'off',
+    placeholder: t(saved ? '已保存，留空则不修改' : '可以留空，连接时再输入'),
+  });
+  const passwordField = field(t('登录密码'), password);
   const description = h('input', { class: 'input', placeholder: t('这台机器是做什么的'), value: view?.context.description });
-  const tags = h('input', { class: 'input', placeholder: t('用逗号分隔，例如 personal, lab'), value: view?.tags.join(', ') });
+  const tags = tagEditor(view?.tags ?? []);
   const choices = [['key', t('密钥')], ['agent', 'ssh-agent'], ['password', t('密码')]];
   const seg = h('div', { class: 'segmented full', role: 'group', 'aria-label': t('登录方式') });
   const drawSeg = () => {
@@ -117,6 +172,7 @@ function hostDialog(view, { title, subtitle, submitLabel, save }) {
       onclick: () => { auth = v; drawSeg(); },
     }, label)));
     keyField.hidden = auth !== 'key';
+    passwordField.hidden = auth !== 'password';
   };
   drawSeg();
   formDialog({
@@ -127,25 +183,40 @@ function hostDialog(view, { title, subtitle, submitLabel, save }) {
       h('div', { class: 'field-row port' }, field(t('地址'), addr), field(t('端口'), port)),
       h('div', { class: 'field' }, h('span', null, t('登录方式')), seg),
       keyField,
+      passwordField,
       field(t('说明'), description),
-      field(t('标签'), tags)),
-    submit: () => save({
-      name: name.value, address: addr.value, user: user.value, port: Number(port.value), auth,
-      keyPaths: auth === 'key' ? keyPath.value.split('\n').map((p) => p.trim()).filter(Boolean) : [],
-      description: description.value, tags: splitTags(tags.value),
-    }),
+      h('div', { class: 'field' }, h('span', null, t('标签')), tags.el)),
+    submit: async () => {
+      const host = await save({
+        name: name.value, address: addr.value, user: user.value, port: Number(port.value), auth,
+        keyPaths: auth === 'key' ? keys.values() : [],
+        description: description.value, tags: tags.values(),
+      });
+      if (auth === 'password' && password.value) {
+        try {
+          await api.credentialSet(host, 'login_password', password.value);
+        } finally {
+          password.value = '';
+        }
+      }
+      done();
+    },
   });
 }
 
 export function addHostDialog(onDone) {
+  let added;
   hostDialog(null, {
     title: t('添加主机'),
-    subtitle: t('使用密码登录时，添加后再保存一次密码。'),
     submitLabel: t('添加'),
+    // Saving the password again after a failed attempt must not add the host twice.
     save: async (input) => {
-      const host = await api.hostAdd(input);
-      toast(t('已添加 {name}', { name: host.name }));
-      onDone(host);
+      added ??= await api.hostAdd(input);
+      return added.id;
+    },
+    done: () => {
+      toast(t('已添加 {name}', { name: added.name }));
+      onDone(added);
     },
   });
 }
@@ -157,8 +228,9 @@ export function editHostDialog(view, onDone) {
     submitLabel: t('保存'),
     save: async (input) => {
       await api.hostUpdate(view.id, input);
-      onDone();
+      return view.id;
     },
+    done: onDone,
   });
 }
 

@@ -573,3 +573,20 @@ pub async fn open_terminal(host: String) -> Result<()> {
     })
     .await
 }
+
+/// Opens a Finder panel in ~/.ssh, where private keys usually live; None when the person cancels.
+#[tauri::command]
+pub async fn pick_key_file(app: tauri::AppHandle) -> Result<Option<String>> {
+    use tauri_plugin_dialog::DialogExt;
+    let directory = importer::home()?.join(".ssh");
+    blocking(move || {
+        Ok(app
+            .dialog()
+            .file()
+            .set_directory(directory)
+            .blocking_pick_file()
+            .and_then(|f| f.into_path().ok())
+            .map(|p| p.to_string_lossy().into_owned()))
+    })
+    .await
+}

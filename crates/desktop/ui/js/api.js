@@ -22,6 +22,7 @@ export const api = {
   settingsSet: (settings) => invoke('settings_set', { settings }),
   revealDataDir: () => invoke('reveal_data_dir'),
   openTerminal: (host) => invoke('open_terminal', { host }),
+  pickKeyFile: () => invoke('pick_key_file'),
   setTheme: (theme) => window.__TAURI__.window.getCurrentWindow().setTheme(theme),
 };
 
