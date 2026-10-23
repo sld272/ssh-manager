@@ -266,7 +266,8 @@ const EN = {
   '全部主机': 'All hosts',
 
   // Settings
-  '接入 AI 工具': 'Connect AI tools',
+  'Agent 接入': 'Agents',
+  '接入 AI Agent': 'Connect an AI agent',
   '复制接入提示词': 'Copy setup prompt',
   '已复制，发给你的 AI 工具即可': 'Copied. Send it to your AI tool.',
   '把提示词发给 Claude Code、Codex 等 AI 工具，由它自己完成接入。': 'Send the prompt to Claude Code, Codex or another AI tool and it sets itself up.',

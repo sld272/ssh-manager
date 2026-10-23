@@ -71,8 +71,8 @@ export function settingsView(state, actions) {
         row(t('外观'), segmented(t('外观'), [['system', t('跟随系统')], ['light', t('浅色')], ['dark', t('深色')]], s.theme, (theme) => change({ theme })))),
       group(t('终端'),
         row(t('默认终端'), terminal, t('在主机详情里点“连接”时打开。'))),
-      group('Agent',
-        row(t('接入 AI 工具'),
+      group(t('Agent 接入'),
+        row(t('接入 AI Agent'),
           h('button', {
             type: 'button', class: 'btn btn-sm', disabled: !env.command,
             onclick: () => navigator.clipboard.writeText(agentPrompt(env.command)).then(() => toast(t('已复制，发给你的 AI 工具即可'))),
