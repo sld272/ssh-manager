@@ -102,6 +102,16 @@ impl OpenSsh<'_> {
                     &format!("密钥文件不存在：{path}"),
                 )?;
             }
+            // 1Password or Secretive removes its socket while the app is not running.
+            if let (Some(socket), Authentication::Agent | Authentication::Key { .. }) =
+                (&conn.identity_agent, &conn.authentication)
+            {
+                error::require(
+                    std::path::Path::new(socket).exists(),
+                    "agent_unavailable",
+                    &format!("ssh-agent 套接字不存在：{socket}，请确认提供密钥的应用正在运行"),
+                )?;
+            }
             if let Authentication::Password {
                 credential_ref: None,
             } = conn.authentication
@@ -156,6 +166,11 @@ impl OpenSsh<'_> {
                         writeln!(file, "  IdentityFile {}", config_quote(path))?;
                     }
                 }
+            }
+            if let (Some(socket), Authentication::Agent | Authentication::Key { .. }) =
+                (&conn.identity_agent, &conn.authentication)
+            {
+                writeln!(file, "  IdentityAgent {}", config_quote(socket))?;
             }
             if !conn.jumps.is_empty() {
                 writeln!(

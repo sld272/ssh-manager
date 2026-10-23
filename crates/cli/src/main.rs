@@ -137,10 +137,22 @@ struct AuthenticationArgs {
     password: bool,
     #[arg(long,conflicts_with_all=["key","password"],help="使用 ssh-agent")]
     agent: bool,
+    #[arg(
+        long,
+        conflicts_with = "password",
+        help = "使用指定的 ssh-agent 套接字，例如 1Password 或 Secretive 提供的套接字"
+    )]
+    identity_agent: Option<PathBuf>,
 }
 impl AuthenticationArgs {
     fn selected(&self) -> bool {
         !self.key.is_empty() || self.password || self.agent
+    }
+    fn agent_socket(&self) -> Result<Option<String>> {
+        self.identity_agent
+            .as_deref()
+            .map(|p| absolute(p).map(|p| p.to_string_lossy().into()))
+            .transpose()
     }
     fn value(&self) -> Result<Authentication> {
         if self.password {
@@ -209,6 +221,8 @@ enum HostCommand {
         no_jump: bool,
         #[arg(long, help = "确认已处理列出的配置导入问题")]
         clear_issues: bool,
+        #[arg(long, conflicts_with = "identity_agent", help = "改用默认的 ssh-agent")]
+        no_identity_agent: bool,
         #[arg(long)]
         connection: Option<String>,
         #[command(flatten)]
@@ -426,6 +440,7 @@ fn dispatch(cli: &Cli, cancel: Arc<AtomicBool>) -> Result<Value> {
                 h.tags = tags.clone();
                 h.context.description = description.clone();
                 h.connections[0].jumps = jumps(&store, jump)?;
+                h.connections[0].identity_agent = auth.agent_socket()?;
                 store.save(&h)?;
                 to_value(h)
             }
@@ -440,6 +455,7 @@ fn dispatch(cli: &Cli, cancel: Arc<AtomicBool>) -> Result<Value> {
                 jump,
                 no_jump,
                 clear_issues,
+                no_identity_agent,
                 connection,
                 auth,
             } => {
@@ -467,6 +483,15 @@ fn dispatch(cli: &Cli, cancel: Arc<AtomicBool>) -> Result<Value> {
                 if auth.selected() {
                     c.identities_only = !auth.key.is_empty();
                     c.authentication = auth.value()?;
+                }
+                if auth.password {
+                    c.identity_agent = None;
+                }
+                if auth.identity_agent.is_some() {
+                    c.identity_agent = auth.agent_socket()?;
+                }
+                if *no_identity_agent {
+                    c.identity_agent = None;
                 }
                 if let Some(v) = name {
                     h.name = v.clone();
@@ -538,6 +563,7 @@ fn dispatch(cli: &Cli, cancel: Arc<AtomicBool>) -> Result<Value> {
                     user: user.clone(),
                     port: *port,
                     identities_only: !auth.key.is_empty(),
+                    identity_agent: auth.agent_socket()?,
                     authentication: auth.value()?,
                     jumps: jumps(&store, jump)?,
                     issues: vec![],
@@ -861,6 +887,12 @@ fn render(value: &Value, cli: &Cli) -> Result<()> {
             for warning in plan.warnings {
                 println!("提示：{warning}");
             }
+            for notice in plan.skipped {
+                println!("已跳过：{notice}");
+            }
+            for notice in plan.ignored {
+                println!("已忽略：{notice}");
+            }
             return Ok(());
         }
         _ => {}
@@ -924,6 +956,9 @@ fn print_host(h: &Host, details: bool) -> Result<()> {
     }
     for issue in &c.issues {
         println!("  提示：{issue}");
+    }
+    if let Some(socket) = &c.identity_agent {
+        println!("  ssh-agent 套接字：{socket}");
     }
     if details {
         println!("  主机 ID：{}", h.id);

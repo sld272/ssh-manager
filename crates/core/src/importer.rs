@@ -14,13 +14,32 @@ pub struct ImportPlan {
     pub source: String,
     pub hosts: Vec<Host>,
     pub warnings: Vec<String>,
+    /// Options that managed connections replace with their own settings; they never block a host.
+    pub ignored: Vec<String>,
+    /// Match blocks are never evaluated, so their settings are not imported.
+    pub skipped: Vec<String>,
+}
+struct SkippedMatch {
+    location: String,
+    criteria: String,
+    host_patterns: Vec<String>,
+    original_patterns: Vec<String>,
+    options: Vec<String>,
+}
+enum Block {
+    Host(Vec<String>),
+    Match,
 }
 struct Structure {
     aliases: Vec<String>,
     identities: Vec<Vec<String>>,
     unsupported: Vec<(Vec<String>, String)>,
-    visited: HashSet<PathBuf>,
+    ignored: Vec<(Vec<String>, String)>,
+    skipped: Vec<SkippedMatch>,
     warnings: Vec<String>,
+    /// Copies without Match blocks; `ssh -G` reads these so Match exec can never run.
+    sanitized: tempfile::TempDir,
+    copies: usize,
 }
 const SUPPORTED: &[&str] = &[
     "hostname",
@@ -28,9 +47,50 @@ const SUPPORTED: &[&str] = &[
     "port",
     "identityfile",
     "identitiesonly",
+    "identityagent",
     "proxyjump",
+    "preferredauthentications",
+    "pubkeyauthentication",
+    "passwordauthentication",
     "host",
     "include",
+];
+const MANAGED: &str = "连接参数由 ssh-manager 统一设置";
+const TRUST: &str = "主机信任由 ssh-manager 单独保存";
+const FORWARDING: &str = "ssh-manager 不转发 agent、图形界面或端口";
+const PASSPHRASE: &str = "密钥口令通过凭据绑定或 ssh-agent 提供";
+const IGNORED: &[(&str, &str)] = &[
+    ("ignoreunknown", MANAGED),
+    ("serveraliveinterval", MANAGED),
+    ("serveralivecountmax", MANAGED),
+    ("tcpkeepalive", MANAGED),
+    ("connecttimeout", MANAGED),
+    ("connectionattempts", MANAGED),
+    ("controlmaster", MANAGED),
+    ("controlpath", MANAGED),
+    ("controlpersist", MANAGED),
+    ("compression", MANAGED),
+    ("loglevel", MANAGED),
+    ("batchmode", MANAGED),
+    ("requesttty", MANAGED),
+    ("numberofpasswordprompts", MANAGED),
+    ("kbdinteractiveauthentication", MANAGED),
+    ("userknownhostsfile", TRUST),
+    ("globalknownhostsfile", TRUST),
+    ("stricthostkeychecking", TRUST),
+    ("updatehostkeys", TRUST),
+    ("checkhostip", TRUST),
+    ("hashknownhosts", TRUST),
+    ("visualhostkey", TRUST),
+    ("forwardagent", FORWARDING),
+    ("forwardx11", FORWARDING),
+    ("forwardx11trusted", FORWARDING),
+    ("localforward", FORWARDING),
+    ("remoteforward", FORWARDING),
+    ("dynamicforward", FORWARDING),
+    ("exitonforwardfailure", FORWARDING),
+    ("usekeychain", PASSPHRASE),
+    ("addkeystoagent", PASSPHRASE),
 ];
 fn tokens(line: &str) -> Result<Vec<String>> {
     let mut quote = None;
@@ -64,9 +124,9 @@ fn tokens(line: &str) -> Result<Vec<String>> {
 fn read_structure(
     file: &Path,
     s: &mut Structure,
-    patterns: &mut Vec<String>,
+    block: &mut Block,
     stack: &mut HashSet<PathBuf>,
-) -> Result<()> {
+) -> Result<PathBuf> {
     let canonical = file.canonicalize().map_err(|e| {
         Error::new(
             "include_unavailable",
@@ -79,7 +139,9 @@ fn read_structure(
         "include_cycle",
         "SSH Include 存在循环引用",
     )?;
-    s.visited.insert(canonical.clone());
+    s.copies += 1;
+    let copy = s.sanitized.path().join(format!("{}.conf", s.copies));
+    let mut out = String::new();
     for (number, line) in std::fs::read_to_string(&canonical)?.lines().enumerate() {
         let words = tokens(line)?;
         if words.is_empty() {
@@ -87,29 +149,46 @@ fn read_structure(
         }
         let key = words[0].to_ascii_lowercase();
         let values = &words[1..];
+        let location = format!("{}:{}", canonical.display(), number + 1);
         error::require(
             !values.is_empty(),
             "invalid_ssh_config",
-            &format!("{}:{} 缺少选项值", canonical.display(), number + 1),
+            &format!("{location} 缺少选项值"),
         )?;
         if key == "match" {
-            return Err(Error::new(
-                "dynamic_config_requires_manual_import",
-                format!(
-                    "{}:{} 含 Match 条件，请将所需主机整理为静态配置后导入",
-                    canonical.display(),
-                    number + 1
-                ),
-            ));
+            if values.len() == 1 && values[0].eq_ignore_ascii_case("all") {
+                // "Match all" ends a Host block so the following lines apply to every host, exactly like "Host *".
+                *block = Block::Host(vec!["*".into()]);
+                out.push_str("Host *\n");
+            } else {
+                s.skipped.push(skipped_match(location, values));
+                *block = Block::Match;
+            }
+            continue;
+        }
+        // A Match block, including one that ends an included file, lasts until the next Host line.
+        if matches!(block, Block::Match) && key != "host" {
+            if let Some(m) = s.skipped.last_mut() {
+                if !m.options.contains(&words[0]) {
+                    m.options.push(words[0].clone());
+                }
+            }
+            continue;
         }
         if key == "host" {
-            *patterns = values.to_vec();
+            *block = Block::Host(values.to_vec());
             for v in values {
                 if !v.contains(['*', '?', '!']) && !s.aliases.contains(v) {
                     s.aliases.push(v.clone());
                 }
             }
-        } else if key == "include" {
+        }
+        let Block::Host(patterns) = &*block else {
+            unreachable!("Match lines continue above")
+        };
+        let patterns = patterns.clone();
+        if key == "include" {
+            let mut copies = vec![];
             for v in values {
                 let expanded = expand_home(v)?;
                 let path = if expanded.is_absolute() {
@@ -126,25 +205,61 @@ fn read_structure(
                         .push(format!("Include 未找到文件：{}", path.display()));
                 }
                 for f in files {
-                    read_structure(&f, s, patterns, stack)?;
+                    copies.push(read_structure(&f, s, block, stack)?);
                 }
             }
-        } else if key == "identityfile" {
-            s.identities.push(patterns.clone());
-        } else if !SUPPORTED.contains(&key.as_str()) {
-            s.unsupported.push((
-                patterns.clone(),
-                format!(
-                    "{}:{} 未转换选项 {}",
-                    canonical.display(),
-                    number + 1,
-                    words[0]
-                ),
-            ));
+            if !copies.is_empty() {
+                let paths: Vec<_> = copies
+                    .iter()
+                    .map(|p| format!("\"{}\"", p.display()))
+                    .collect();
+                out.push_str(&format!("Include {}\n", paths.join(" ")));
+            }
+            continue;
         }
+        if key == "identityfile" {
+            s.identities.push(patterns);
+        } else if let Some((_, reason)) = IGNORED.iter().find(|(k, _)| *k == key) {
+            s.ignored.push((
+                patterns,
+                format!("{location} 未导入 {}：{reason}", words[0]),
+            ));
+        } else if !SUPPORTED.contains(&key.as_str()) {
+            s.unsupported
+                .push((patterns, format!("{location} 未转换选项 {}", words[0])));
+        }
+        out.push_str(line);
+        out.push('\n');
     }
     stack.remove(&canonical);
-    Ok(())
+    std::fs::write(&copy, out)?;
+    Ok(copy)
+}
+fn skipped_match(location: String, values: &[String]) -> SkippedMatch {
+    let mut m = SkippedMatch {
+        location,
+        criteria: values.join(" "),
+        host_patterns: vec![],
+        original_patterns: vec![],
+        options: vec![],
+    };
+    let mut words = values.iter();
+    while let Some(word) = words.next() {
+        let criterion = word.to_ascii_lowercase();
+        if matches!(criterion.as_str(), "all" | "canonical" | "final") {
+            continue;
+        }
+        // "Match host" without a pattern list is malformed; OpenSSH rejects it, and it names no host here.
+        let Some(argument) = words.next() else { break };
+        let patterns = argument.split(',').map(str::to_owned);
+        // A negated criterion such as "!host web" does not say which hosts the block applies to.
+        match criterion.as_str() {
+            "host" => m.host_patterns.extend(patterns),
+            "originalhost" => m.original_patterns.extend(patterns),
+            _ => {}
+        }
+    }
+    m
 }
 pub fn home() -> Result<PathBuf> {
     directories::BaseDirs::new()
@@ -179,13 +294,16 @@ pub fn preview(source: &Path, selected: &[String]) -> Result<ImportPlan> {
         aliases: vec![],
         identities: vec![],
         unsupported: vec![],
-        visited: HashSet::new(),
+        ignored: vec![],
+        skipped: vec![],
         warnings: vec![],
+        sanitized: tempfile::Builder::new().prefix("sshm-import-").tempdir()?,
+        copies: 0,
     };
-    read_structure(
+    let sanitized = read_structure(
         source,
         &mut structure,
-        &mut vec!["*".into()],
+        &mut Block::Host(vec!["*".into()]),
         &mut HashSet::new(),
     )?;
     let mut names = if selected.is_empty() {
@@ -197,6 +315,23 @@ pub fn preview(source: &Path, selected: &[String]) -> Result<ImportPlan> {
         source: source.canonicalize()?.to_string_lossy().into(),
         hosts: vec![],
         warnings: structure.warnings.clone(),
+        ignored: vec![],
+        skipped: structure
+            .skipped
+            .iter()
+            .map(|m| {
+                if m.options.is_empty() {
+                    format!("{} 跳过 Match {}", m.location, m.criteria)
+                } else {
+                    format!(
+                        "{} 跳过 Match {}（其中的 {} 未导入）",
+                        m.location,
+                        m.criteria,
+                        m.options.join("、")
+                    )
+                }
+            })
+            .collect(),
     };
     let mut pending_jumps = BTreeMap::new();
     let mut index = 0;
@@ -207,11 +342,11 @@ pub fn preview(source: &Path, selected: &[String]) -> Result<ImportPlan> {
         let mut cmd = Command::new("ssh");
         cmd.arg("-G")
             .arg("-F")
-            .arg(source)
+            .arg(&sanitized)
             .arg("--")
             .arg(&name)
             .env("LC_ALL", "C");
-        // Recursive inspection above rejects all Match blocks before OpenSSH can evaluate Match exec.
+        // The sanitized copies contain no Match blocks, so OpenSSH cannot evaluate Match exec here.
         let r = process::run(
             cmd,
             None,
@@ -253,7 +388,24 @@ pub fn preview(source: &Path, selected: &[String]) -> Result<ImportPlan> {
             .cloned()
             .collect();
         let explicit_keys = structure.identities.iter().any(|p| matches(p, &name));
-        let authentication = if keys.is_empty() || (existing.is_empty() && !explicit_keys) {
+        // OpenSSH 9.9 prints these as true/false; earlier releases print yes/no.
+        let enabled = |k: &str| !matches!(value(k).as_str(), "no" | "false");
+        let preferred = value("preferredauthentications");
+        let method = match preferred.as_str() {
+            "" => "publickey,password",
+            v => v,
+        }
+        .split(',')
+        .find(|m| {
+            (*m == "publickey" && enabled("pubkeyauthentication"))
+                || (*m == "password" && enabled("passwordauthentication"))
+        })
+        .map(str::to_owned);
+        let authentication = if method.as_deref() == Some("password") {
+            Authentication::Password {
+                credential_ref: None,
+            }
+        } else if keys.is_empty() || (existing.is_empty() && !explicit_keys) {
             Authentication::Agent
         } else {
             Authentication::Key {
@@ -280,6 +432,33 @@ pub fn preview(source: &Path, selected: &[String]) -> Result<ImportPlan> {
             .collect();
         if !structure.warnings.is_empty() {
             c.issues.extend(structure.warnings.clone());
+        }
+        let hostname = value("hostname");
+        for m in &structure.skipped {
+            if matches(&m.host_patterns, &hostname) || matches(&m.original_patterns, &name) {
+                c.issues.push(format!(
+                    "{} 的 Match 条件可能适用于此主机，其中的设置未导入，请确认后补充",
+                    m.location
+                ));
+            }
+        }
+        // "PreferredAuthentications keyboard-interactive" leaves neither key nor password authentication.
+        if method.is_none() {
+            c.issues.push(
+                "SSH 配置只允许 ssh-manager 不支持的认证方式，请导入后选择密钥、ssh-agent 或密码"
+                    .into(),
+            );
+        }
+        let agent = value("identityagent");
+        if !agent.is_empty() && !matches!(c.authentication, Authentication::Password { .. }) {
+            if agent.starts_with('/') {
+                c.identity_agent = Some(agent.clone());
+            } else {
+                // "IdentityAgent SSH_AUTH_SOCK" or "none" names no socket that a managed connection can use.
+                c.issues.push(format!(
+                    "IdentityAgent {agent} 不是套接字路径，请导入后指定 ssh-agent 套接字"
+                ));
+            }
         }
         if let Authentication::Key { paths, .. } = &c.authentication {
             for p in paths {
@@ -311,7 +490,7 @@ pub fn preview(source: &Path, selected: &[String]) -> Result<ImportPlan> {
             path: plan.source.clone(),
             alias: name,
             imported_at: Utc::now(),
-            snapshot: serde_json::json!({"address":c.address,"port":c.port,"user":c.user,"identity_files":values.get("identityfile"),"proxy_jump":jump}),
+            snapshot: serde_json::json!({"address":c.address,"port":c.port,"user":c.user,"identity_files":values.get("identityfile"),"proxy_jump":jump,"identity_agent":agent}),
         });
         plan.hosts.push(h);
         error::require(
@@ -330,6 +509,12 @@ pub fn preview(source: &Path, selected: &[String]) -> Result<ImportPlan> {
             h.connections[0].jumps = j.iter().map(|name| ids[name]).collect();
         }
     }
+    plan.ignored = structure
+        .ignored
+        .iter()
+        .filter(|(p, _)| plan.hosts.iter().any(|h| matches(p, &h.name)))
+        .map(|(_, notice)| notice.clone())
+        .collect();
     Ok(plan)
 }
 pub fn apply(store: &Store, plan: ImportPlan) -> Result<usize> {

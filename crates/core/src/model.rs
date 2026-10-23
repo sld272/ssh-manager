@@ -26,6 +26,9 @@ pub struct Connection {
     // Catalogs created before the first VM verification did not store IdentitiesOnly; their default was false.
     #[serde(default)]
     pub identities_only: bool,
+    /// Agent socket for key and agent authentication, such as the one 1Password or Secretive provides; None uses SSH_AUTH_SOCK.
+    #[serde(default)]
+    pub identity_agent: Option<String>,
     /// Ordered connection IDs; all hops are local OpenSSH connections.
     pub jumps: Vec<Uuid>,
     pub issues: Vec<String>,
@@ -93,6 +96,7 @@ impl Host {
                 port,
                 user,
                 identities_only: matches!(&authentication, Authentication::Key { .. }),
+                identity_agent: None,
                 authentication,
                 jumps: vec![],
                 issues: vec![],
@@ -154,6 +158,9 @@ impl Host {
                 "登录用户名包含不支持的字符",
             )?;
             require(c.port > 0, "invalid_port", "端口必须在 1 到 65535 之间")?;
+            if let Some(p) = &c.identity_agent {
+                validate_absolute_path(p)?;
+            }
             if let Authentication::Key { paths, .. } = &c.authentication {
                 require(
                     !paths.is_empty(),

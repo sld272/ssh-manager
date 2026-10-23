@@ -7,7 +7,7 @@
 ## 当前能力
 
 - 主机增删改查、稳定 ID、标签、同一主机的多套登录配置与有序跳板。
-- OpenSSH 静态配置预览与一次性导入：Host、Include、默认规则、多密钥、IdentitiesOnly、ProxyJump。递归检查后才调用 `ssh -G`；Match 条件直接报告，其他未转换选项保留为待处理问题。
+- OpenSSH 静态配置预览与一次性导入：Host、Include、默认规则、多密钥、IdentitiesOnly、IdentityAgent、ProxyJump，以及由 PreferredAuthentications / PubkeyAuthentication 推断的密码认证。Match 条件块不执行、不导入，`ssh -G` 只读取去掉 Match 块的临时副本；UseKeychain、ServerAlive 等由 ssh-manager 自行设置的选项列为已忽略，其余未转换选项保留为待处理问题。
 - 密钥、ssh-agent、登录密码和密钥口令。密码与口令进入系统凭据存储，数据库只保存引用。
 - 独立 known_hosts：导入已有信任，或扫描并核对指纹后确认；身份变化时停止连接。
 - 前台命令执行：工作目录、项目选择、超时、取消、分别有界的 stdout/stderr、远端退出码与结果状态。
@@ -91,6 +91,10 @@ ssh-manager credential set web --passphrase
 ```
 
 扫描获取的公钥候选不等于可信身份。跳板后的目标目前通过 `trust import` 导入已有信任；`trust scan` 只支持直接连接。已有公钥冲突时，需要核实变化后显式使用 `--replace`。
+
+预览分别列出三类结果：`ignored` 是不影响受管连接的选项，例如 UseKeychain、AddKeysToAgent、ServerAliveInterval、主机信任与转发设置；`skipped` 是跳过的 Match 条件块及其中未导入的选项；`issues` 是需要处理的问题。`Match all` 按 `Host *` 处理。`Match host` / `Match originalhost` 明确指向的主机会得到待处理问题；其他条件（如 `exec`、`localnetwork`）无法判断适用范围，只在 `skipped` 中列出，请在预览中确认。
+
+IdentityAgent 指向的套接字（例如 1Password、Secretive）随主机保存，可用 `--identity-agent PATH` 手动设置，`host edit NAME --no-identity-agent` 改回默认 ssh-agent。套接字不存在时操作直接返回 `agent_unavailable`，通常表示提供密钥的应用未运行。
 
 导入结果含 `issues` 时不会执行；可修改登录配置，在处理完列出的选项与依赖后使用 `host edit NAME --clear-issues` 确认。导入不自动透传任意 SSH 选项，也不覆盖已有同名主机。`host export` 输出 JSON，去掉系统凭据绑定；`host restore FILE` 在无冲突时整体导入，仍需在本机绑定凭据和建立主机信任。
 

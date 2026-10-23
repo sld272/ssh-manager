@@ -97,7 +97,7 @@ fn command_and_config_injection_are_rejected_at_the_model_boundary() {
     assert_eq!(ssh::shell_quote("/tmp/a'b"), "'/tmp/a'\\''b'");
 }
 #[test]
-fn importer_recursively_rejects_match_exec_without_executing_it() {
+fn importer_skips_match_blocks_without_executing_them() {
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("config");
     let included = dir.path().join("included");
@@ -105,21 +105,59 @@ fn importer_recursively_rejects_match_exec_without_executing_it() {
     fs::write(
         &config,
         format!(
-            "Include {}\nHost vm\n HostName 192.0.2.1\n User user\n",
+            "Include \"{}\"\nHost vm\n HostName 192.0.2.1\n User user\nMatch originalhost web\n ProxyCommand unsafe-command\nHost web\n HostName 192.0.2.2\n User user\nMatch all\n Port 2222\n",
             included.display()
         ),
     )
     .unwrap();
+    // The block opened at the end of the included file continues into the outer file until "Host vm".
     fs::write(
         included,
-        format!("Match exec \"touch {}\"\n", marker.display()),
+        format!(
+            "Match exec \"touch '{}'\"\n HostName 198.51.100.1\n",
+            marker.display()
+        ),
     )
     .unwrap();
-    assert_eq!(
-        importer::preview(&config, &["vm".into()]).unwrap_err().code,
-        "dynamic_config_requires_manual_import"
-    );
+    let plan = importer::preview(&config, &["vm".into(), "web".into()]).unwrap();
     assert!(!marker.exists());
+    assert_eq!(plan.skipped.len(), 2);
+    assert!(plan.skipped[0].contains("HostName"));
+    let vm = &plan.hosts[0].connections[0];
+    assert_eq!(vm.address, "192.0.2.1");
+    assert_eq!(vm.port, 2222);
+    assert!(vm.issues.is_empty());
+    let web = &plan.hosts[1].connections[0];
+    assert_eq!(web.port, 2222);
+    assert_eq!(web.issues.len(), 1);
+    assert!(web.issues[0].contains("Match"));
+}
+#[test]
+fn importer_ignores_client_options_and_maps_authentication() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config");
+    let key = dir.path().join("key");
+    let socket = dir.path().join("agent dir/agent.sock");
+    fs::write(&key, "").unwrap();
+    fs::write(
+        &config,
+        format!(
+            "Host *\n IgnoreUnknown UseKeychain\n UseKeychain yes\n AddKeysToAgent yes\nHost pw\n HostName 192.0.2.1\n User user\n PubkeyAuthentication no\nHost op\n HostName 192.0.2.2\n User user\n IdentityAgent \"{}\"\n IdentityFile \"{}\"\n IdentitiesOnly yes\nHost kbd\n HostName 192.0.2.3\n User user\n PreferredAuthentications keyboard-interactive\n",
+            socket.display(),
+            key.display()
+        ),
+    )
+    .unwrap();
+    let plan = importer::preview(&config, &[]).unwrap();
+    assert_eq!(plan.ignored.len(), 3);
+    let pw = &plan.hosts[0].connections[0];
+    assert!(matches!(pw.authentication, Authentication::Password { .. }));
+    assert!(pw.issues.is_empty());
+    let op = &plan.hosts[1].connections[0];
+    assert!(matches!(op.authentication, Authentication::Key { .. }));
+    assert_eq!(op.identity_agent.as_deref(), Some(socket.to_str().unwrap()));
+    assert!(op.issues.is_empty());
+    assert_eq!(plan.hosts[2].connections[0].issues.len(), 1);
 }
 #[test]
 fn static_import_preserves_defaults_multivalue_keys_and_jump_dependencies() {
@@ -137,7 +175,15 @@ fn static_import_preserves_defaults_multivalue_keys_and_jump_dependencies() {
     assert_eq!(web.connections[0].port, 2222);
     assert_eq!(web.connections[0].jumps, vec![jump.default_connection]);
     assert!(web.connections[0].issues.is_empty());
-    assert_eq!(jump.connections[0].authentication, Authentication::Agent);
+    // Without an explicit IdentityFile, only OpenSSH default keys present on this machine are kept.
+    match &jump.connections[0].authentication {
+        Authentication::Agent => {}
+        Authentication::Key { paths, .. } => {
+            assert!(paths.iter().all(|p| std::path::Path::new(p).is_file()))
+        }
+        other => panic!("unexpected authentication {other:?}"),
+    }
+    assert!(jump.connections[0].issues.is_empty());
     match &web.connections[0].authentication {
         Authentication::Key { paths, .. } => assert_eq!(paths.len(), 2),
         _ => panic!("explicit keys missing"),
