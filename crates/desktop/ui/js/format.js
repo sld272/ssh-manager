@@ -35,9 +35,10 @@ const STATUS = {
   command_failed: { label: '命令未成功', tone: 'err', icon: 'x' },
   connection_failed: { label: '连接失败', tone: 'err', icon: 'offline', hint: '请检查地址、端口、网络和跳板连接' },
   authentication_failed: { label: '认证失败', tone: 'err', icon: 'key', hint: '请检查登录账号及绑定的凭据' },
-  host_key_required: { label: '需确认身份', tone: 'warn', icon: 'shield', hint: '请导入已有的主机信任记录，或核对指纹后确认' },
-  host_key_changed: { label: '服务器身份已变化', tone: 'err', icon: 'shield', hint: '服务器身份发生变化，请核实后重新建立信任' },
-  needs_interaction: { label: '需要你操作', tone: 'warn', icon: 'alert', hint: '认证需要用户操作，请检查密钥口令或硬件密钥' },
+  // Recorded before servers were trusted on their first connection.
+  host_key_required: { label: '需确认身份', tone: 'warn', icon: 'shield' },
+  host_key_changed: { label: '服务器身份已变化', tone: 'err', icon: 'shield', hint: '服务器的密钥和上次连接时不同。如果服务器没有重装或更换，可能有人在冒充它。' },
+  needs_interaction: { label: '需要你操作', tone: 'warn', icon: 'alert', hint: '认证需要用户操作，请检查密钥密码或硬件密钥' },
   result_unknown: { label: '结果未知', tone: 'warn', icon: 'question', hint: '未能确认远端执行结果，请检查服务器上的实际状态' },
   transfer_failed: { label: '传输未完成', tone: 'err', icon: 'x', hint: '传输没有完成，目标可能有部分内容' },
 };
@@ -85,9 +86,3 @@ export function shortFingerprint(fp) {
 export function defaultConnection(host) {
   return host.connections.find((c) => c.id === host.default_connection);
 }
-
-export function source(host) {
-  return host.source ? 'ssh_config' : 'manual';
-}
-const SOURCES = { ssh_config: 'SSH 配置', manual: '手动添加' };
-export const sourceLabel = (key) => t(SOURCES[key]);

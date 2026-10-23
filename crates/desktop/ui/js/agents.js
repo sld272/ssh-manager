@@ -53,7 +53,7 @@ export function agentsView(state) {
             h('ul', { class: 'can-list' },
               ['查看主机、项目和记录', '检查连接、执行命令', '上传和下载文件', '写下自己的发现，不会覆盖你的说明']
                 .map((text) => h('li', null, h('span', { class: 'state ok' }, icon('check', 14, 2)), t(text))),
-              ['不能查看密码或私钥', '不能保存凭据、修改服务器信任']
+              ['不能查看密码或私钥', '不能保存凭据，也不能信任身份变化的服务器']
                 .map((text) => h('li', null, h('span', { class: 'state err' }, icon('x', 14, 2)), t(text))))),
           h('p', { class: 'small muted' }, t('执行命令拥有对应 SSH 账号的全部权限。需要只读时，请在服务器上使用受限账号。')))))),
   });

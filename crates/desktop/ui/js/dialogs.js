@@ -1,6 +1,6 @@
 import { api, message } from './api.js';
 import { h, icon, replace, toast } from './dom.js';
-import { address, defaultConnection, keyAlgorithm } from './format.js';
+import { defaultConnection } from './format.js';
 import { t } from './i18n.js';
 
 function open(content) {
@@ -72,10 +72,10 @@ export function credentialDialog(view, purpose, onDone) {
   const passphrase = purpose === 'key_passphrase';
   const input = h('input', { class: 'input', type: 'password', autocomplete: 'off', required: true, autofocus: true });
   formDialog({
-    title: t(passphrase ? '保存 {name} 的密钥口令' : '保存 {name} 的登录密码', { name: view.name }),
-    subtitle: t('保存在系统钥匙串中。agent 可以用它登录，但看不到它。'),
+    title: t(passphrase ? '保存 {name} 的密钥密码' : '保存 {name} 的登录密码', { name: view.name }),
+    subtitle: t(passphrase ? '就是解锁这个密钥文件时输入的密码。保存在系统钥匙串中，agent 能用它连接，但看不到它。' : '保存在系统钥匙串中。agent 可以用它登录，但看不到它。'),
     iconName: 'key',
-    fields: field(t(passphrase ? '密钥口令' : '登录密码'), input),
+    fields: field(t(passphrase ? '密钥密码' : '登录密码'), input),
     submitLabel: t('保存'),
     submit: async () => {
       try {
@@ -83,35 +83,44 @@ export function credentialDialog(view, purpose, onDone) {
       } finally {
         input.value = '';
       }
-      toast(t(passphrase ? '口令已保存' : '密码已保存'));
+      toast(t(passphrase ? '密钥密码已保存' : '密码已保存'));
       onDone();
     },
   });
 }
 
-export function addHostDialog(onDone) {
-  let auth = 'key';
-  const name = h('input', { class: 'input', required: true, autofocus: true, placeholder: 'blog' });
-  const addr = h('input', { class: 'input', required: true, placeholder: t('example.com 或 IP 地址') });
-  const user = h('input', { class: 'input', required: true, placeholder: 'deploy' });
-  const port = h('input', { class: 'input', type: 'number', min: 1, max: 65535, value: '22', required: true });
-  const keyPath = h('input', { class: 'input', placeholder: '~/.ssh/id_ed25519', value: '~/.ssh/id_ed25519' });
+const splitTags = (text) => text.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean);
+
+// The add and edit forms share their fields; `view` is the host being edited.
+function hostDialog(view, { title, subtitle, submitLabel, save }) {
+  const c = view && defaultConnection(view);
+  const a = c?.authentication;
+  let auth = a?.kind ?? 'key';
+  const name = h('input', { class: 'input', required: true, autofocus: !view, placeholder: 'blog', value: view?.name });
+  const addr = h('input', { class: 'input', required: true, placeholder: t('example.com 或 IP 地址'), value: c?.address });
+  const user = h('input', { class: 'input', required: true, placeholder: 'deploy', value: c?.user });
+  const port = h('input', { class: 'input', type: 'number', min: 1, max: 65535, required: true, value: c?.port ?? 22 });
+  // Imported hosts can list several key files; they get one line each.
+  const paths = a?.kind === 'key' ? a.paths : ['~/.ssh/id_ed25519'];
+  const keyPath = paths.length > 1
+    ? h('textarea', { class: 'textarea mono', rows: paths.length, spellcheck: 'false' })
+    : h('input', { class: 'input mono', placeholder: '~/.ssh/id_ed25519', spellcheck: 'false' });
+  keyPath.value = paths.join('\n');
   const keyField = field(t('密钥文件'), keyPath);
-  const description = h('input', { class: 'input', placeholder: t('这台机器是做什么的') });
-  const tags = h('input', { class: 'input', placeholder: t('用逗号分隔，例如 personal, lab') });
+  const description = h('input', { class: 'input', placeholder: t('这台机器是做什么的'), value: view?.context.description });
+  const tags = h('input', { class: 'input', placeholder: t('用逗号分隔，例如 personal, lab'), value: view?.tags.join(', ') });
   const choices = [['key', t('密钥')], ['agent', 'ssh-agent'], ['password', t('密码')]];
   const seg = h('div', { class: 'segmented full', role: 'group', 'aria-label': t('登录方式') });
   const drawSeg = () => {
-    replace(seg, choices.map(([value, label]) => h('button', {
-      type: 'button', 'aria-pressed': String(auth === value),
-      onclick: () => { auth = value; drawSeg(); },
+    replace(seg, choices.map(([v, label]) => h('button', {
+      type: 'button', 'aria-pressed': String(auth === v),
+      onclick: () => { auth = v; drawSeg(); },
     }, label)));
     keyField.hidden = auth !== 'key';
   };
   drawSeg();
   formDialog({
-    title: t('添加主机'),
-    subtitle: t('添加后还需要确认服务器身份；使用密码时再保存一次密码。'),
+    title, subtitle, submitLabel,
     iconName: 'server',
     fields: h('div', { class: 'stack', style: 'gap: 14px' },
       h('div', { class: 'field-row' }, field(t('名称'), name), field(t('登录用户'), user)),
@@ -120,14 +129,21 @@ export function addHostDialog(onDone) {
       keyField,
       field(t('说明'), description),
       field(t('标签'), tags)),
+    submit: () => save({
+      name: name.value, address: addr.value, user: user.value, port: Number(port.value), auth,
+      keyPaths: auth === 'key' ? keyPath.value.split('\n').map((p) => p.trim()).filter(Boolean) : [],
+      description: description.value, tags: splitTags(tags.value),
+    }),
+  });
+}
+
+export function addHostDialog(onDone) {
+  hostDialog(null, {
+    title: t('添加主机'),
+    subtitle: t('使用密码登录时，添加后再保存一次密码。'),
     submitLabel: t('添加'),
-    submit: async () => {
-      const host = await api.hostAdd({
-        name: name.value, address: addr.value, user: user.value, port: Number(port.value),
-        auth, keyPath: auth === 'key' ? keyPath.value : null,
-        description: description.value,
-        tags: tags.value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean),
-      });
+    save: async (input) => {
+      const host = await api.hostAdd(input);
       toast(t('已添加 {name}', { name: host.name }));
       onDone(host);
     },
@@ -135,19 +151,12 @@ export function addHostDialog(onDone) {
 }
 
 export function editHostDialog(view, onDone) {
-  const description = h('textarea', { class: 'textarea' });
-  description.value = view.context.description;
-  const tags = h('input', { class: 'input', value: view.tags.join(', '), placeholder: t('用逗号分隔') });
-  formDialog({
+  hostDialog(view, {
     title: t('编辑 {name}', { name: view.name }),
-    iconName: 'server',
-    fields: h('div', { class: 'stack', style: 'gap: 14px' }, field(t('说明'), description), field(t('标签'), tags)),
+    subtitle: t('更换地址或端口后，下次连接会重新记录服务器身份。'),
     submitLabel: t('保存'),
-    submit: async () => {
-      await api.hostUpdate(view.id, {
-        description: description.value,
-        tags: tags.value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean),
-      });
+    save: async (input) => {
+      await api.hostUpdate(view.id, input);
       onDone();
     },
   });
@@ -170,98 +179,4 @@ export function projectDialog(view, onDone) {
       onDone();
     },
   });
-}
-
-export function trustDialog(view, onDone) {
-  const c = defaultConnection(view);
-  const replaceExisting = view.trusted_keys.length > 0;
-  const behindJump = c.jumps.length > 0;
-  let mode = behindJump ? 'import' : 'scan';
-  let keys = null;
-  let loading = false;
-  let error = null;
-
-  const seg = h('div', { class: 'segmented full', role: 'group', 'aria-label': t('来源') });
-  const keysBox = h('div', { class: 'stack', style: 'gap: 8px' });
-  const fingerprint = h('input', { class: 'input mono', placeholder: 'SHA256:…', autocomplete: 'off', spellcheck: 'false', oninput: () => draw() });
-  const fingerprintField = h('label', { class: 'field' }, h('span', null, t('你从可信来源获得的指纹')), fingerprint);
-  const matchLine = h('p');
-  const errorLine = h('p', { class: 'error-text', hidden: true });
-  const note = h('p', { class: 'small muted' });
-  const submit = h('button', { type: 'button', class: 'btn btn-primary' });
-  let el;
-
-  const normalized = () => {
-    const v = fingerprint.value.trim();
-    return v && !v.startsWith('SHA256:') ? `SHA256:${v}` : v;
-  };
-  const match = () => keys?.find((k) => k.fingerprint === normalized());
-
-  function scan() {
-    loading = true;
-    error = null;
-    draw();
-    api.trustScan(view.id)
-      .then((k) => { keys = k; })
-      .catch((e) => { error = message(e); })
-      .finally(() => { loading = false; draw(); });
-  }
-
-  function draw() {
-    replace(seg,
-      h('button', { type: 'button', 'aria-pressed': String(mode === 'scan'), disabled: behindJump, onclick: () => { mode = 'scan'; if (!keys) scan(); draw(); } }, t('扫描服务器')),
-      h('button', { type: 'button', 'aria-pressed': String(mode === 'import'), onclick: () => { mode = 'import'; error = null; draw(); } }, t('从 known_hosts 导入')));
-    fingerprintField.hidden = mode !== 'scan';
-    matchLine.hidden = mode !== 'scan';
-    if (mode === 'scan') {
-      const found = match();
-      replace(keysBox,
-        h('div', { class: 'section-title' }, t('服务器提供的公钥')),
-        loading ? h('p', { class: 'muted' }, t('正在读取服务器公钥…'))
-          : (keys ?? []).map((k) => h('div', { class: `key-option${found === k ? ' selected' : ''}` },
-            h('span', { class: 'key-alg' }, keyAlgorithm(k.algorithm)),
-            h('span', { class: 'mono grow break small' }, k.fingerprint))));
-      const typed = normalized();
-      matchLine.className = found ? 'ok-text' : 'error-text';
-      replace(matchLine, typed && keys ? (found ? [icon('check', 14, 2.2), t('与服务器公钥一致')] : t('与服务器提供的公钥都不一致，请勿信任')) : '');
-      note.textContent = t('扫描结果本身不能证明服务器身份。以后公钥发生变化时，连接会停止，等你核实。');
-      submit.textContent = t('信任此公钥');
-      submit.disabled = !found || loading;
-    } else {
-      replace(keysBox, h('p', null, t('从 {file} 导入 {address} 已有的信任记录。', { file: '~/.ssh/known_hosts', address: `${c.address}${c.port === 22 ? '' : `:${c.port}`}` })));
-      note.textContent = t(behindJump ? '经跳板连接的主机无法直接扫描，请从 known_hosts 导入。' : '适合你之前用 ssh 连接过这台服务器的情况。');
-      submit.textContent = t('导入');
-      submit.disabled = false;
-    }
-    errorLine.hidden = !error;
-    errorLine.textContent = error ?? '';
-  }
-
-  submit.addEventListener('click', async () => {
-    submit.disabled = true;
-    error = null;
-    try {
-      if (mode === 'scan') {
-        await api.trustAccept(view.id, match().fingerprint, replaceExisting);
-      } else {
-        await api.trustImport(view.id, replaceExisting);
-      }
-      toast(t('已信任 {name} 的服务器身份', { name: view.name }));
-      el.close();
-      onDone();
-    } catch (e) {
-      error = message(e);
-      draw();
-    }
-  });
-
-  el = open(h('div', { class: 'dialog' },
-    head(t('确认 {name} 的服务器身份', { name: view.name }), t('连接 {address}。请在云服务商控制台等可信来源核对指纹，一致后再信任。', { address: address(c) }), 'warn', 'shield'),
-    replaceExisting && h('div', { class: 'banner' }, t('已经保存过这台服务器的公钥。只有在确认服务器确实更换了密钥时才更新。')),
-    seg, keysBox, fingerprintField, matchLine, note, errorLine,
-    h('div', { class: 'dialog-actions' },
-      h('button', { type: 'button', class: 'btn', onclick: () => el.close() }, t('取消')),
-      submit)));
-  draw();
-  if (mode === 'scan') scan();
 }

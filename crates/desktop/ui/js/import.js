@@ -70,7 +70,7 @@ export function importView(state, actions) {
     ? t('跳板 {names} 已在主机库中，暂时无法一起导入。请先取消依赖它的主机。', { names: list(conflicts) })
     : total.size > imp.selected.size
       ? t('会一同导入 {n} 台跳板机。', { n: total.size - imp.selected.size })
-      : t('导入后，为使用密码的主机保存密码，并确认服务器身份。');
+      : t('连接过的服务器会沿用 known_hosts 里的身份记录。');
 
   return screen({
     title: t('导入主机'),

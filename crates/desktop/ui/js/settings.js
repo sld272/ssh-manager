@@ -15,8 +15,8 @@ function row(label, control, hint) {
 
 function segmented(label, options, value, onPick) {
   return h('div', { class: 'segmented', role: 'group', 'aria-label': label },
-    options.map(([key, text, disabled]) => h('button', {
-      type: 'button', 'aria-pressed': String(value === key), disabled, onclick: () => onPick(key),
+    options.map(([key, text]) => h('button', {
+      type: 'button', 'aria-pressed': String(value === key), onclick: () => onPick(key),
     }, text)));
 }
 
@@ -30,15 +30,11 @@ export function settingsView(state, actions) {
   const env = view.environment;
   const change = (patch) => actions.saveSettings({ ...s, ...patch });
 
-  const language = h('select', { class: 'select', 'aria-label': t('语言'), onchange: (e) => change({ language: e.target.value }) },
-    [['system', t('跟随系统')], ['zh-CN', '简体中文'], ['en', 'English']]
-      .map(([key, text]) => h('option', { value: key, selected: s.language === key }, text)));
-
-  const terminals = view.terminals.map((app) => [
-    app.id,
-    app.available ? (app.id === 'terminal' ? t('系统终端') : app.name) : t('{name}（未安装）', { name: app.name }),
-    !app.available,
-  ]);
+  const select = (label, options, value, onPick) => h('select', { class: 'select', 'aria-label': label, onchange: (e) => onPick(e.target.value) },
+    options.map(([key, text]) => h('option', { value: key, selected: value === key }, text)));
+  const language = select(t('语言'), [['system', t('跟随系统')], ['zh-CN', '简体中文'], ['en', 'English']], s.language, (v) => change({ language: v }));
+  // Only installed terminals are listed.
+  const terminal = select(t('默认终端'), view.terminals.map((app) => [app.id, app.id === 'terminal' ? t('系统终端') : app.name]), s.terminal, (v) => change({ terminal: v }));
 
   return screen({
     title: t('设置'),
@@ -47,7 +43,7 @@ export function settingsView(state, actions) {
         row(t('语言'), language),
         row(t('外观'), segmented(t('外观'), [['system', t('跟随系统')], ['light', t('浅色')], ['dark', t('深色')]], s.theme, (theme) => change({ theme })))),
       group(t('终端'),
-        row(t('默认终端'), segmented(t('默认终端'), terminals, s.terminal, (terminal) => change({ terminal })), t('在主机详情里点“连接”时打开。'))),
+        row(t('默认终端'), terminal, t('在主机详情里点“连接”时打开。'))),
       group(t('本机环境'),
         row('OpenSSH', status(!!env.ssh_version, env.ssh_version ?? t('未找到'))),
         row(t('凭据组件'), status(env.credential_helper_available, t(env.credential_helper_available ? '可用' : '未找到'))),

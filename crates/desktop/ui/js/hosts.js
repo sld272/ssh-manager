@@ -1,6 +1,6 @@
 import { h, icon, replace, screen } from './dom.js';
 import {
-  address, auth, caller, defaultConnection, keyAlgorithm, kind, relative, shortFingerprint, source, sourceLabel, status,
+  address, caller, defaultConnection, keyAlgorithm, kind, relative, shortFingerprint, status,
 } from './format.js';
 import { t } from './i18n.js';
 
@@ -8,8 +8,8 @@ import { t } from './i18n.js';
 export function hostState(view) {
   const c = defaultConnection(view);
   if (c.issues.length) return { tone: 'warn', label: t('配置需补全'), attention: true };
-  if (view.trusted_keys.length === 0) return { tone: 'warn', label: t('需确认身份'), attention: true };
   if (c.authentication.kind === 'password' && !c.authentication.credential_ref) return { tone: 'warn', label: t('需保存密码'), attention: true };
+  if (view.last_operation?.status === 'host_key_changed') return { tone: 'err', label: t('服务器身份已变化'), attention: true };
   const last = view.last_check;
   if (!last) return { tone: '', label: t('未检查') };
   if (last.status === 'succeeded') return { tone: 'ok', label: t('可连接') };
@@ -28,7 +28,6 @@ function jumpNames(view, hosts) {
 }
 
 function matches(view, filter) {
-  if (filter.source && source(view) !== filter.source) return false;
   if (filter.tag && !view.tags.includes(filter.tag)) return false;
   const q = filter.query.trim().toLowerCase();
   if (!q) return true;
@@ -74,20 +73,25 @@ function loginInfo(view, actions) {
       a.credential_ref ? '' : 'warn');
   }
   if (a.kind === 'key') {
-    return info('key', t('登录方式'), t(a.passphrase_ref ? '密钥 · 口令已保存' : '密钥'),
+    // Only a key with a passphrase needs one saved; a plain key just logs in.
+    return info('key', t('登录方式'), t(a.passphrase_ref ? '密钥 · 已保存密钥密码' : '密钥'),
       [a.paths.map((p) => h('div', { class: 'mono ellipsis' }, home(p))),
-        c.identity_agent && h('div', { class: 'ellipsis' }, t('代理 {path}', { path: home(c.identity_agent) }))],
-      link(t(a.passphrase_ref ? '更换口令' : '保存口令'), () => actions.credential(view, 'key_passphrase')));
+        c.identity_agent && h('div', { class: 'ellipsis' }, t('代理 {path}', { path: home(c.identity_agent) })),
+        view.key_passphrase && !a.passphrase_ref && h('div', null, t('这个密钥设有密码，保存后连接时不用再输入'))],
+      (view.key_passphrase || a.passphrase_ref) && link(t(a.passphrase_ref ? '更换密钥密码' : '保存密钥密码'), () => actions.credential(view, 'key_passphrase')));
   }
   return info('key', t('登录方式'), 'ssh-agent', c.identity_agent ? h('div', { class: 'ellipsis' }, home(c.identity_agent)) : t('本机默认的 ssh-agent'));
 }
 
+// The server's key is recorded on the first connection; a later change stops connecting until the person accepts it.
 function trustInfo(view, actions) {
   const key = view.trusted_keys[0];
-  if (!key) return info('shield', t('服务器身份'), t('尚未确认'), t('确认后才能连接'), link(t('确认身份'), () => actions.trust(view)), 'warn');
-  return info('shieldCheck', t('服务器身份'), t('已信任'),
-    h('div', { class: 'mono ellipsis', title: key.fingerprint }, `${keyAlgorithm(key.algorithm)} ${shortFingerprint(key.fingerprint)}`),
-    link(t('重新确认'), () => actions.trust(view)), 'ok');
+  if (view.last_operation?.status === 'host_key_changed') {
+    return info('shield', t('服务器身份'), t('已变化'), t('连接已停止'), link(t('信任新身份'), () => actions.trust(view)), 'err');
+  }
+  if (!key) return info('shield', t('服务器身份'), t('未记录'), t('首次连接时自动记录'));
+  return info('shieldCheck', t('服务器身份'), t('已记录'),
+    h('div', { class: 'mono ellipsis', title: key.fingerprint }, `${keyAlgorithm(key.algorithm)} ${shortFingerprint(key.fingerprint)}`));
 }
 
 function detail(view, state, actions) {
@@ -107,8 +111,7 @@ function detail(view, state, actions) {
         view.context.description
           ? h('p', { class: 'note-text', style: 'color: var(--text2)' }, view.context.description)
           : link(t('添加说明'), () => actions.edit(view)),
-        h('div', { class: 'row wrap', style: 'gap: 4px; margin-top: 2px' },
-          h('span', { class: 'chip' }, sourceLabel(source(view))),
+        view.tags.length > 0 && h('div', { class: 'row wrap', style: 'gap: 4px; margin-top: 2px' },
           view.tags.map((tag) => h('span', { class: 'chip' }, tag)))),
       h('button', { type: 'button', class: 'btn', onclick: () => actions.edit(view) }, t('编辑')),
       h('button', { type: 'button', class: 'btn', disabled: checking, onclick: () => actions.check(view) },
@@ -129,7 +132,7 @@ function detail(view, state, actions) {
         h('strong', null, status(result).label),
         (result.error ?? status(result).hint) && h('span', { class: 'small' }, result.error ?? status(result).hint),
         result.stderr && h('span', { class: 'mono small break' }, result.stderr.trim().split('\n').slice(-3).join('\n'))),
-      result.status === 'host_key_required' && h('button', { type: 'button', class: 'btn btn-sm', onclick: () => actions.trust(view) }, t('确认身份'))),
+      result.status === 'host_key_changed' && h('button', { type: 'button', class: 'btn btn-sm', onclick: () => actions.trust(view) }, t('信任新身份'))),
 
     h('div', { class: 'section' },
       h('h3', { class: 'section-title' }, t('连接路径')),

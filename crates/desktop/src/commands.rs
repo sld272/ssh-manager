@@ -64,6 +64,8 @@ pub struct HostView {
     #[serde(flatten)]
     host: Host,
     trusted_keys: Vec<HostKey>,
+    /// The default login's key file is protected by a passphrase.
+    key_passphrase: bool,
     last_check: Option<OperationRecord>,
     last_operation: Option<OperationRecord>,
 }
@@ -94,8 +96,15 @@ pub async fn overview() -> Result<Overview> {
         let mut hosts = vec![];
         for host in store.list()? {
             let records = history.iter().filter(|r| r.host_id == host.id);
+            let key_passphrase = match &host.connection(None)?.authentication {
+                Authentication::Key { paths, .. } => {
+                    paths.iter().any(|p| credentials::key_has_passphrase(p))
+                }
+                _ => false,
+            };
             hosts.push(HostView {
                 trusted_keys: trust::list(&store, host.default_connection)?,
+                key_passphrase,
                 last_check: records.clone().find(|r| r.kind == "check").cloned(),
                 last_operation: records.clone().next().cloned(),
                 host,
@@ -120,21 +129,13 @@ pub async fn check(host: String) -> Result<OperationResult> {
     blocking(move || with_ssh(|ssh| ssh.check(&host, None, &options(30)))).await
 }
 
+/// Forgets a server's saved key after it changed; the next connection trusts the key it presents.
 #[tauri::command]
-pub async fn trust_scan(host: String) -> Result<Vec<HostKey>> {
-    blocking(move || trust::scan(&store()?, &host, None)).await
-}
-
-#[tauri::command]
-pub async fn trust_accept(host: String, fingerprint: String, replace: bool) -> Result<HostKey> {
-    blocking(move || trust::accept(&store()?, &host, None, fingerprint.trim(), replace)).await
-}
-
-#[tauri::command]
-pub async fn trust_import(host: String, replace: bool) -> Result<Vec<HostKey>> {
+pub async fn trust_reset(host: String) -> Result<()> {
     blocking(move || {
-        let source = importer::home()?.join(".ssh/known_hosts");
-        trust::import_known_hosts(&store()?, &host, None, &source, replace)
+        let store = store()?;
+        let id = store.host(&host)?.default_connection;
+        trust::forget(&store, id)
     })
     .await
 }
@@ -162,40 +163,46 @@ pub async fn credential_set(
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct NewHost {
+pub struct HostInput {
     name: String,
     address: String,
     user: String,
     port: u16,
     /// "key", "agent" or "password".
     auth: String,
-    key_path: Option<String>,
+    /// Key files for "key"; imported hosts often list several.
+    key_paths: Vec<String>,
     description: String,
     tags: Vec<String>,
 }
-
-#[tauri::command]
-pub async fn host_add(input: NewHost) -> Result<Host> {
-    blocking(move || {
-        let authentication = match input.auth.as_str() {
-            "key" => {
-                let path = input.key_path.unwrap_or_default();
-                Authentication::Key {
-                    paths: vec![importer::expand_home(path.trim())?.to_string_lossy().into()],
-                    passphrase_ref: None,
-                }
-            }
+impl HostInput {
+    fn authentication(&self) -> Result<Authentication> {
+        Ok(match self.auth.as_str() {
+            "key" => Authentication::Key {
+                paths: self
+                    .key_paths
+                    .iter()
+                    .map(|p| Ok(importer::expand_home(p.trim())?.to_string_lossy().into()))
+                    .collect::<Result<_>>()?,
+                passphrase_ref: None,
+            },
             "password" => Authentication::Password {
                 credential_ref: None,
             },
             _ => Authentication::Agent,
-        };
+        })
+    }
+}
+
+#[tauri::command]
+pub async fn host_add(input: HostInput) -> Result<Host> {
+    blocking(move || {
         let mut h = Host::new(
             input.name.trim().into(),
             input.address.trim().into(),
             input.user.trim().into(),
             input.port,
-            authentication,
+            input.authentication()?,
         );
         h.context.description = input.description.trim().into();
         h.tags = input.tags;
@@ -205,29 +212,49 @@ pub async fn host_add(input: NewHost) -> Result<Host> {
     .await
 }
 
+/// Edits the host and its default login. Returns the saved secrets the keychain could not delete.
 #[tauri::command]
-pub async fn host_update(
-    host: String,
-    description: Option<String>,
-    tags: Option<Vec<String>>,
-    clear_issues: bool,
-) -> Result<Host> {
+pub async fn host_update(host: String, input: HostInput) -> Result<Vec<String>> {
     blocking(move || {
         let store = store()?;
         let mut h = store.host(&host)?;
-        if let Some(v) = description {
-            h.context.description = v.trim().into();
+        h.name = input.name.trim().into();
+        h.context.description = input.description.trim().into();
+        h.tags = input.tags.clone();
+        let id = h.default_connection;
+        let c = h
+            .connections
+            .iter_mut()
+            .find(|c| c.id == id)
+            .expect("validated hosts contain their default login");
+        c.address = input.address.trim().into();
+        c.user = input.user.trim().into();
+        c.port = input.port;
+        let next = input.authentication()?;
+        // The saved password or passphrase stays only while the method and key files stay the same.
+        let same = match (&c.authentication, &next) {
+            (Authentication::Key { paths: a, .. }, Authentication::Key { paths: b, .. }) => a == b,
+            (a, b) => std::mem::discriminant(a) == std::mem::discriminant(b),
+        };
+        if !same {
+            // An imported "IdentitiesOnly yes" with agent login would offer no key at all.
+            c.identities_only = matches!(next, Authentication::Key { .. });
+            c.authentication = next;
         }
-        if let Some(v) = tags {
-            h.tags = v;
+        credentials::update_host(&store, &system_credentials()?, &h)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn host_clear_issues(host: String) -> Result<()> {
+    blocking(move || {
+        let store = store()?;
+        let mut h = store.host(&host)?;
+        for c in &mut h.connections {
+            c.issues.clear();
         }
-        if clear_issues {
-            for c in &mut h.connections {
-                c.issues.clear();
-            }
-        }
-        store.save(&h)?;
-        Ok(h)
+        store.save(&h)
     })
     .await
 }
@@ -299,7 +326,22 @@ pub struct ImportPreview {
 pub async fn import_preview(path: Option<String>) -> Result<ImportPreview> {
     blocking(move || {
         let plan = importer::preview(&import_source(path)?, &[])?;
-        let existing = store()?.list()?.into_iter().map(|h| h.name).collect();
+        // A host imported earlier counts as present even after it was renamed.
+        let catalog = store()?.list()?;
+        let existing = plan
+            .hosts
+            .iter()
+            .map(|p| &p.name)
+            .filter(|name| {
+                catalog.iter().any(|h| {
+                    &h.name == *name
+                        || h.source
+                            .as_ref()
+                            .is_some_and(|s| s.path == plan.source && &s.alias == *name)
+                })
+            })
+            .cloned()
+            .collect();
         Ok(ImportPreview { plan, existing })
     })
     .await
@@ -388,20 +430,35 @@ fn load_settings() -> Result<Settings> {
     }
 }
 
+/// Terminals that can run the connect script: id, name and app bundle name.
 const TERMINALS: &[(&str, &str, &str)] = &[
-    (
-        "terminal",
-        "Terminal",
-        "/System/Applications/Utilities/Terminal.app",
-    ),
-    ("ghostty", "Ghostty", "/Applications/Ghostty.app"),
-    ("iterm", "iTerm", "/Applications/iTerm.app"),
+    ("terminal", "Terminal", "Terminal.app"),
+    ("ghostty", "Ghostty", "Ghostty.app"),
+    ("iterm", "iTerm", "iTerm.app"),
 ];
+/// Where the terminal is installed: Terminal ships with macOS, others go to /Applications or ~/Applications.
+fn terminal_app(id: &str) -> Result<Option<PathBuf>> {
+    let Some((_, _, bundle)) = TERMINALS.iter().find(|(t, ..)| *t == id) else {
+        return Ok(None);
+    };
+    let places = [
+        PathBuf::from("/System/Applications/Utilities"),
+        PathBuf::from("/Applications"),
+        importer::home()?.join("Applications"),
+    ];
+    Ok(places.iter().map(|p| p.join(bundle)).find(|p| p.exists()))
+}
+/// The saved terminal, or the system Terminal once the saved one is uninstalled.
+fn current_terminal(settings: &Settings) -> Result<String> {
+    Ok(match terminal_app(&settings.terminal)? {
+        Some(_) => settings.terminal.clone(),
+        None => "terminal".into(),
+    })
+}
 #[derive(Serialize)]
 pub struct TerminalApp {
     id: &'static str,
     name: &'static str,
-    available: bool,
 }
 #[derive(Serialize)]
 pub struct Environment {
@@ -425,16 +482,17 @@ fn installed_command() -> Result<Option<PathBuf>> {
 #[tauri::command]
 pub async fn settings_get() -> Result<SettingsView> {
     blocking(|| {
+        let mut settings = load_settings()?;
+        settings.terminal = current_terminal(&settings)?;
+        let mut terminals = vec![];
+        for (id, name, _) in TERMINALS {
+            if terminal_app(id)?.is_some() {
+                terminals.push(TerminalApp { id, name });
+            }
+        }
         Ok(SettingsView {
-            settings: load_settings()?,
-            terminals: TERMINALS
-                .iter()
-                .map(|(id, name, path)| TerminalApp {
-                    id,
-                    name,
-                    available: std::path::Path::new(path).exists(),
-                })
-                .collect(),
+            settings,
+            terminals,
             environment: Environment {
                 ssh_version: ssh_version(),
                 credential_helper_available: credential_helper()?.is_file(),
@@ -451,9 +509,9 @@ pub async fn settings_get() -> Result<SettingsView> {
 pub async fn settings_set(settings: Settings) -> Result<Settings> {
     blocking(move || {
         error::require(
-            TERMINALS.iter().any(|(id, ..)| *id == settings.terminal),
+            terminal_app(&settings.terminal)?.is_some(),
             "invalid_settings",
-            "不支持此终端",
+            "未找到所选终端",
         )?;
         let path = settings_path()?;
         store::private_dir(path.parent().expect("settings live in the data directory"))?;
@@ -486,16 +544,8 @@ pub async fn open_terminal(host: String) -> Result<()> {
                 "未找到 ssh-manager 命令行工具，请先安装后再在终端中连接",
             )
         })?;
-        let terminal = load_settings()?.terminal;
-        let (_, _, app) = TERMINALS
-            .iter()
-            .find(|(id, ..)| *id == terminal)
-            .expect("settings_set accepts only listed terminals");
-        error::require(
-            std::path::Path::new(app).exists(),
-            "terminal_unavailable",
-            "未找到所选终端，请在设置中重新选择",
-        )?;
+        let terminal = current_terminal(&load_settings()?)?;
+        let app = terminal_app(&terminal)?.expect("current_terminal returns an installed terminal");
         // Terminal and iTerm run a .command file directly; the script removes itself before connecting.
         let script = tempfile::Builder::new()
             .prefix("ssh-manager-")
@@ -513,9 +563,9 @@ pub async fn open_terminal(host: String) -> Result<()> {
         drop(file);
         let mut open = std::process::Command::new("open");
         if terminal == "ghostty" {
-            open.args(["-na", app, "--args", "-e"]).arg(&path);
+            open.arg("-na").arg(&app).args(["--args", "-e"]).arg(&path);
         } else {
-            open.args(["-a", app]).arg(&path);
+            open.arg("-a").arg(&app).arg(&path);
         }
         let status = open.status()?;
         error::require(status.success(), "terminal_failed", "无法打开终端")?;

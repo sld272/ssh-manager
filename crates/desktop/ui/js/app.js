@@ -2,10 +2,9 @@ import { activityNav, activityView } from './activity.js';
 import { agentsView } from './agents.js';
 import { api, message } from './api.js';
 import {
-  addHostDialog, confirmDialog, credentialDialog, editHostDialog, projectDialog, trustDialog,
+  addHostDialog, confirmDialog, credentialDialog, editHostDialog, projectDialog,
 } from './dialogs.js';
 import { h, icon, replace, toast } from './dom.js';
-import { source, sourceLabel } from './format.js';
 import { emptyHostsView, hostsView } from './hosts.js';
 import { setLanguage, t } from './i18n.js';
 import { importView } from './import.js';
@@ -17,7 +16,7 @@ const state = {
   settings: null,
   loadError: null,
   selected: null,
-  filter: { source: null, tag: null, query: '' },
+  filter: { tag: null, query: '' },
   checking: new Set(),
   opening: new Set(),
   checkResults: {},
@@ -118,7 +117,21 @@ const actions = {
       render();
     }
   },
-  trust: (view) => trustDialog(view, refresh),
+  async trust(view) {
+    const ok = await confirmDialog({
+      title: t('信任 {name} 的新身份？', { name: view.name }),
+      body: t('只在你知道服务器重装过系统、换过机器或地址时这样做。之后会记录它现在的密钥。'),
+      confirmLabel: t('信任新身份'),
+    });
+    if (!ok) return;
+    try {
+      await api.trustReset(view.id);
+    } catch (e) {
+      toast(message(e));
+      return;
+    }
+    await actions.check(view);
+  },
   credential: (view, purpose) => credentialDialog(view, purpose, refresh),
   edit: (view) => editHostDialog(view, refresh),
   project: (view) => projectDialog(view, refresh),
@@ -126,7 +139,7 @@ const actions = {
   async clearIssues(view) {
     const ok = await confirmDialog({ title: t('确认已处理这些配置？'), body: t('确认后可以连接。如果配置仍不完整，连接可能失败。'), confirmLabel: t('确认') });
     if (!ok) return;
-    await api.hostUpdate(view.id, { clearIssues: true }).catch((e) => toast(message(e)));
+    await api.hostClearIssues(view.id).catch((e) => toast(message(e)));
     refresh();
   },
   async removeProject(view, name) {
@@ -136,7 +149,7 @@ const actions = {
   async remove(view) {
     const ok = await confirmDialog({
       title: t('删除 {name}？', { name: view.name }),
-      body: t('会同时删除为它保存的密码和口令。操作记录会保留。'),
+      body: t('会同时删除为它保存的密码和密钥密码。操作记录会保留。'),
       confirmLabel: t('删除'),
     });
     if (!ok) return;
@@ -202,25 +215,14 @@ function navItem(view, label, iconName, extra) {
 }
 
 function hostFilters() {
-  const hosts = state.overview?.hosts ?? [];
-  if (!hosts.length) return null;
-  const counts = {};
-  for (const v of hosts) counts[source(v)] = (counts[source(v)] ?? 0) + 1;
-  const tags = [...new Set(hosts.flatMap((v) => v.tags))].sort();
-  return [
-    h('div', { class: 'nav-group nav-filters' },
-      h('div', { class: 'nav-label' }, t('来源')),
-      Object.entries(counts).map(([key, count]) => h('button', {
-        type: 'button', class: 'nav-item', 'aria-pressed': String(state.filter.source === key),
-        onclick: () => { state.filter.source = state.filter.source === key ? null : key; render(); },
-      }, h('span', { class: 'grow' }, sourceLabel(key)), h('span', { class: 'nav-count' }, count)))),
-    tags.length > 0 && h('div', { class: 'stack nav-filters', style: 'gap: 6px' },
-      h('div', { class: 'nav-label', style: 'padding-bottom: 0' }, t('标签')),
-      h('div', { class: 'tag-list' }, tags.map((tag) => h('button', {
-        type: 'button', class: 'tag', 'aria-pressed': String(state.filter.tag === tag),
-        onclick: () => { state.filter.tag = state.filter.tag === tag ? null : tag; render(); },
-      }, tag)))),
-  ];
+  const tags = [...new Set((state.overview?.hosts ?? []).flatMap((v) => v.tags))].sort();
+  if (!tags.length) return null;
+  return h('div', { class: 'stack nav-filters', style: 'gap: 6px' },
+    h('div', { class: 'nav-label', style: 'padding-bottom: 0' }, t('标签')),
+    h('div', { class: 'tag-list' }, tags.map((tag) => h('button', {
+      type: 'button', class: 'tag', 'aria-pressed': String(state.filter.tag === tag),
+      onclick: () => { state.filter.tag = state.filter.tag === tag ? null : tag; render(); },
+    }, tag))));
 }
 
 // In a narrow window the sidebar floats over the content: hovering the toolbar button opens it,
