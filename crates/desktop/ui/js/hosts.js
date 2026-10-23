@@ -56,6 +56,11 @@ function info(iconName, title, value, detail, action, tone = '') {
     action);
 }
 
+// "刚刚探测" reads naturally; other times read "探测于 3 分钟前".
+function probedAt(iso) {
+  const when = relative(iso);
+  return when === '刚刚' ? '刚刚探测' : `探测于 ${when}`;
+}
 const link = (label, onclick) => h('button', { type: 'button', class: 'btn-link', onclick }, label);
 const home = (path) => path.replace(/^\/Users\/[^/]+|^\/home\/[^/]+/, '~');
 
@@ -135,7 +140,7 @@ function detail(view, state, actions) {
       trustInfo(view, actions),
       info('system', '系统信息',
         facts ? `${facts.system} · ${facts.architecture}` : '暂无',
-        facts ? `用户 ${facts.user} · 探测于${relative(facts.observed_at)}` : '检查连接后显示'),
+        facts ? `用户 ${facts.user} · ${probedAt(facts.observed_at)}` : '检查连接后显示'),
       info('activity', '最近操作',
         last ? `${caller(last.caller)} · ${kind(last.kind)}` : '暂无',
         last ? `${relative(last.started_at)} · ${status(last).label}` : null)),

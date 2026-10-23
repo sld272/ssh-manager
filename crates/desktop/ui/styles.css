@@ -112,9 +112,9 @@ h1, h2, h3, p { margin: 0; }
 .dot.err { background: var(--err); }
 .dot.hollow { background: transparent; border: 1.5px solid var(--text3); }
 
-/* A narrow window keeps the sidebar as an icon rail. */
+/* A narrow window keeps the sidebar as an icon rail, wide enough for the window's traffic lights. */
 @media (max-width: 899px) {
-  :root { --nav-width: 56px; }
+  :root { --nav-width: 76px; }
   .nav { padding: 0 8px 12px; align-items: center; }
   .nav-item { width: 40px; height: 34px; padding: 0; justify-content: center; }
   .nav-item .label, .nav-item .nav-count, .nav-filters, .nav-foot .label { display: none; }
@@ -175,6 +175,8 @@ h1, h2, h3, p { margin: 0; }
 .split { flex: 1; min-height: 0; display: grid; grid-template-columns: var(--list-width) minmax(0, 1fr); }
 .host-list { min-height: 0; overflow-y: auto; background: var(--bg); border-right: 1px solid var(--border); padding: 8px; display: flex; flex-direction: column; gap: 2px; }
 .host-row { display: flex; flex-direction: column; gap: 1px; width: 100%; text-align: left; padding: 8px 10px; border-radius: 8px; border: 0; background: transparent; }
+/* WebKit does not stretch the children of a <button> flex column, which left the state next to the name. */
+.host-row > * { width: 100%; }
 .host-row:hover { background: var(--hover); }
 .host-row[aria-pressed="true"] { background: var(--surface); box-shadow: 0 0 0 1px var(--accent-ring), var(--shadow); }
 .host-name { font-weight: 600; font-size: 13px; }
@@ -182,7 +184,7 @@ h1, h2, h3, p { margin: 0; }
 .host-addr { font-family: var(--mono); font-size: 11px; color: var(--text3); }
 .list-empty { padding: 16px 10px; color: var(--text3); }
 .host-detail { min-height: 0; overflow-y: auto; }
-.detail { padding: var(--pad) 24px 28px; display: flex; flex-direction: column; gap: 20px; max-width: 760px; }
+.detail { padding: var(--pad) var(--pad) 28px; display: flex; flex-direction: column; gap: 20px; max-width: 760px; }
 .detail-head { display: flex; align-items: flex-start; gap: 12px; }
 .detail-title { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; line-height: 1.3; }
 .section { display: flex; flex-direction: column; gap: 8px; }
@@ -192,7 +194,7 @@ h1, h2, h3, p { margin: 0; }
 .hop { padding: 2px 8px; border-radius: 6px; background: var(--bg); border: 1px solid var(--border); font-size: 12px; color: var(--ink); }
 .hop.mono { font-size: 12px; }
 .hop.target { background: var(--brand); color: var(--surface); border-color: var(--brand); }
-.info-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.info-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
 .info { padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .info-head { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text3); margin-bottom: 2px; }
 .info-value { font-weight: 600; }
