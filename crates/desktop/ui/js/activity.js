@@ -1,4 +1,4 @@
-import { h, icon, screen } from './dom.js';
+import { h, screen } from './dom.js';
 import { caller, clock, duration, kind, statusPill } from './format.js';
 import { t } from './i18n.js';
 
@@ -12,8 +12,6 @@ export function activityView(state, actions) {
   const [, , test] = FILTERS.find(([key]) => key === state.activity.filter);
   const { caller: who, host } = state.activity;
   const records = state.history.filter((r) => test(r) && (!who || r.caller === who) && (!host || r.host_id === host));
-  const dayAgo = Date.now() - 86400000;
-  const unknown = state.history.find((r) => r.status === 'result_unknown' && r.kind !== 'check' && new Date(r.started_at).getTime() > dayAgo);
 
   return screen({
     title: t('活动'),
@@ -33,12 +31,6 @@ export function activityView(state, actions) {
         h('span', { class: 'pulse' }),
         h('span', { class: 'grow' }, t('正在{kind}：{host}', { kind: kind(op.kind), host: op.hostName })),
         h('span', { class: 'small' }, t('{time} 开始', { time: clock(op.startedAt) })))),
-
-      unknown && h('div', { class: 'banner' },
-        icon('question', 16),
-        h('div', { class: 'grow' },
-          t('{host} 上的“{what}”结果未知，远端可能已经执行。不要直接重试，先检查实际状态。', { host: unknown.host_name, what: unknown.reason || kind(unknown.kind) })),
-        h('button', { type: 'button', class: 'btn btn-sm', onclick: () => actions.openHost(unknown.host_id) }, t('查看主机'))),
 
       records.length
         ? h('div', { class: 'card table-box' }, h('table', null,

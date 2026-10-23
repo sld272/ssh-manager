@@ -32,7 +32,6 @@ const PATHS = {
   terminal: '<path d="M4 6l6 6-6 6M12 18h8"/>',
   server: '<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>',
   activity: '<path d="M3 12h4l3-8 4 16 3-8h4"/>',
-  agent: '<rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 4v4M9 13h.01M15 13h.01"/>',
   import: '<path d="M12 3v12M7 10l5 5 5-5M4 21h16"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
@@ -147,4 +146,10 @@ document.addEventListener('keydown', (e) => {
   }
 });
 window.addEventListener('blur', closeMenu);
+// Elsewhere WebKit's own menu only offers Reload. Text fields and selected text keep it for copy and paste;
+// places with their own menu, such as host rows, open it and suppress this one.
+document.addEventListener('contextmenu', (e) => {
+  const editable = e.target.closest('input, textarea');
+  if (!editable && document.getSelection()?.isCollapsed !== false) e.preventDefault();
+});
 document.addEventListener('scroll', closeMenu, true);

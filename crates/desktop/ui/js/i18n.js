@@ -35,8 +35,6 @@ const ERRORS = {
   catalog_conflict: 'Some of these hosts already exist. Resolve the name conflicts first.',
   host_in_use: 'Another host uses this one as a jump host. Change that host first.',
   command_unavailable: 'The ssh-manager command-line tool is not installed.',
-  client_unavailable: 'This app was not found.',
-  client_config_invalid: "Claude's configuration file is not valid JSON.",
   invalid_settings: 'The selected terminal was not found.',
   terminal_failed: 'Could not open the terminal.',
   nothing_selected: 'Select at least one host.',
@@ -53,7 +51,6 @@ const EN = {
   '主导航': 'Main navigation',
   '主机': 'Hosts',
   '活动': 'Activity',
-  'Agent 接入': 'Agents',
   '导入': 'Import',
   '设置': 'Settings',
   '标签': 'Tags',
@@ -129,7 +126,6 @@ const EN = {
   '服务器身份': 'Server identity',
   '刚刚探测': 'probed just now',
   '探测于 {when}': 'probed {when}',
-  '添加说明': 'Add a description',
   '检查中…': 'Checking…',
   '检查': 'Check',
   '连接': 'Connect',
@@ -205,8 +201,6 @@ const EN = {
   '你和 agent 在各台主机上做过的操作。只记录目标、时间、调用方和目的，不保存命令内容和输出。': 'What you and your agents did on each host. Only the target, time, caller and purpose are kept, never commands or output.',
   '正在{kind}：{host}': '{kind}: {host}',
   '{time} 开始': 'started {time}',
-  '{host} 上的“{what}”结果未知，远端可能已经执行。不要直接重试，先检查实际状态。': 'The result of “{what}” on {host} is unknown; it may have run. Check the actual state before retrying.',
-  '查看主机': 'View host',
   '时间': 'Time',
   '操作': 'Operation',
   '结果': 'Result',
@@ -247,9 +241,6 @@ const EN = {
   '导入中…': 'Importing…',
   '导入 {n} 台': 'Import {n}',
 
-  // Agents
-  '没有找到已安装的 ssh-manager 命令行工具。agent 通过它连接，请先安装。': 'The ssh-manager command-line tool is not installed. Agents connect through it, so install it first.',
-
   // Hosts: reachability, menus and key sources
   '在线': 'Online',
   '无法连接': 'Unreachable',
@@ -274,19 +265,12 @@ const EN = {
   '全部调用方': 'All callers',
   '全部主机': 'All hosts',
 
-  // Agents
-  '接入后，AI 工具可以用你保存的主机检查连接、执行命令和传输文件，但看不到密码和私钥。它们做过的操作记录在“活动”里。': 'Once added, AI tools can check, run commands on and transfer files with your saved hosts, without seeing passwords or private keys. What they do shows up in Activity.',
-  '本机的 AI 工具': 'AI tools on this Mac',
-  '已接入': 'Added',
-  '重新打开 Claude 后生效': 'Takes effect after reopening Claude',
-  '接入': 'Add',
-  '接入中…': 'Adding…',
-  '已接入 {name}': 'Added to {name}',
-  '已从 {name} 移除': 'Removed from {name}',
-  '没有找到支持的 AI 工具。目前支持 Claude Code、Codex 和 Claude Desktop。': 'No supported AI tool found. Claude Code, Codex and Claude Desktop are supported.',
-  'agent 执行命令时拥有对应 SSH 账号的全部权限。需要只读时，请在服务器上使用受限账号。': 'Agents run commands with the full rights of the SSH account. For read-only access, use a restricted account on the server.',
-
   // Settings
+  '接入 AI 工具': 'Connect AI tools',
+  '复制接入提示词': 'Copy setup prompt',
+  '已复制，发给你的 AI 工具即可': 'Copied. Send it to your AI tool.',
+  '把提示词发给 Claude Code、Codex 等 AI 工具，由它自己完成接入。': 'Send the prompt to Claude Code, Codex or another AI tool and it sets itself up.',
+  '请先安装命令行工具，AI 工具通过它连接。': 'Install the command-line tool first; AI tools connect through it.',
   '通用': 'General',
   '语言': 'Language',
   '跟随系统': 'System',

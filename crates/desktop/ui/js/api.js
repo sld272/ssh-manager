@@ -22,8 +22,6 @@ export const api = {
   pickKeyFile: () => invoke('pick_key_file'),
   keyAgents: () => invoke('key_agents'),
   probe: (hosts) => invoke('probe', { hosts }),
-  mcpClients: () => invoke('mcp_clients'),
-  mcpSet: (client, connected) => invoke('mcp_set', { client, connected }),
   setTheme: (theme) => window.__TAURI__.window.getCurrentWindow().setTheme(theme),
 };
 

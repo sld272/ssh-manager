@@ -50,8 +50,6 @@ fn main() {
             commands::pick_key_file,
             commands::key_agents,
             commands::probe,
-            commands::mcp_clients,
-            commands::mcp_set,
         ])
         .run(tauri::generate_context!())
         .expect("ssh-manager could not start its window");

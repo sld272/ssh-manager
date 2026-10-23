@@ -63,7 +63,7 @@ Add `--json` to any command for structured output. See `ssh-manager --help` for 
 
 ## Desktop app
 
-A Tauri desktop app shares the same catalog as the CLI and MCP server. It shows your hosts with live reachability (a login-free probe every few minutes while the window is open), connection paths, trust and login status, plus an operation history you can filter by caller and host. You can import from `~/.ssh/config`, edit a host's address, user and login method, save passwords, open a host in your terminal (Terminal, Ghostty or iTerm), and add ssh-manager to Claude Code, Codex or Claude Desktop in one click. Settings cover language, appearance and the default terminal.
+A Tauri desktop app shares the same catalog as the CLI and MCP server. It shows your hosts with live reachability (a login-free probe every few minutes while the window is open), connection paths, trust and login status, plus an operation history you can filter by caller and host. You can import from `~/.ssh/config`, edit a host's address, user and login method, save passwords, open a host in your terminal (Terminal, Ghostty or iTerm). Settings cover language, appearance, the default terminal and the agent setup prompt.
 
 ```sh
 scripts/install.sh                      # the app uses the installed credentials helper
@@ -72,16 +72,19 @@ cargo run --release -p ssh-manager-desktop
 
 ## Use with agents
 
-Register the local MCP server (stdio only, no network port). For Claude Code:
+ssh-manager is a local MCP server (stdio only, no network port). Every AI tool registers MCP servers its own way, so let the agent do it: send it the prompt below. The desktop app's Settings page copies the same prompt with your installed path filled in.
 
-```sh
-claude mcp add ssh-manager -- ~/.local/bin/ssh-manager mcp
-```
+```text
+Add ssh-manager as one of your MCP servers so you can use the SSH hosts I keep on this Mac.
 
-Other clients:
+- Name: ssh-manager
+- Transport: stdio (a local process; it opens no network port)
+- Command: the absolute path of `ssh-manager` (usually ~/.local/bin/ssh-manager, written out in full)
+- Arguments: mcp
 
-```json
-{ "mcpServers": { "ssh-manager": { "command": "/absolute/path/to/ssh-manager", "args": ["mcp"] } } }
+Add it the way you support, for the current user rather than one project: your own `mcp add` command or your MCP config file. Do not change anything unrelated to ssh-manager. Tell me if I need to restart you for it to take effect.
+
+Once it is added, call host_list to confirm you can see my hosts. How to use it: https://github.com/sld272/ssh-manager/blob/main/skills/ssh-manager/SKILL.md
 ```
 
 Tools: `host_list`, `host_show`, `check`, `exec`, `upload`, `download` and `context_note`. Managing credentials and host trust stays in the CLI.

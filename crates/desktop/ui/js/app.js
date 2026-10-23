@@ -1,5 +1,4 @@
 import { activityView } from './activity.js';
-import { agentsView } from './agents.js';
 import { api, message } from './api.js';
 import {
   addHostDialog, confirmDialog, credentialDialog, editHostDialog,
@@ -24,8 +23,6 @@ const state = {
   history: [],
   activity: { filter: 'all', caller: null, host: null },
   import: { path: '', preview: null, selected: new Set(), error: null, applying: false },
-  mcp: null,
-  mcpBusy: new Set(),
   // Background reachability per host: { reachable, via_jump, at, failures }.
   reach: {},
 };
@@ -101,11 +98,6 @@ setInterval(() => probe(), 60 * 1000);
 document.addEventListener('visibilitychange', () => probe(true));
 window.addEventListener('online', () => probe(true));
 
-async function loadMcp() {
-  state.mcp = await api.mcpClients().catch((e) => ({ error: message(e) }));
-  render();
-}
-
 async function loadHistory() {
   try {
     state.history = await api.history(300);
@@ -120,13 +112,11 @@ const actions = {
     state.view = view;
     render();
     if (view === 'activity') { await loadHistory(); render(); }
-    if (view === 'agents') loadMcp();
     if (view === 'settings') { await loadSettings(); render(); }
     if (view === 'import' && !state.import.preview) actions.loadImport();
     if (view === 'hosts') refresh();
   },
   select(id) { state.selected = id; render(); },
-  openHost(id) { state.selected = id; actions.navigate('hosts'); },
   async check(view) {
     state.checking.add(view.id);
     state.running.set(view.id, { kind: 'check', hostName: view.name, startedAt: new Date().toISOString() });
@@ -176,19 +166,6 @@ const actions = {
   add: () => addHostDialog(async (host) => { state.selected = host.id; state.view = 'hosts'; await refresh(); probe(); }),
   copyCommand: (view) => navigator.clipboard.writeText(`ssh-manager connect ${view.name}`)
     .then(() => toast(t('已复制连接命令'))),
-  async setMcp(client, connected) {
-    state.mcpBusy.add(client.id);
-    render();
-    try {
-      await api.mcpSet(client.id, connected);
-      toast(t(connected ? '已接入 {name}' : '已从 {name} 移除', { name: client.name }));
-    } catch (e) {
-      toast(message(e));
-    } finally {
-      state.mcpBusy.delete(client.id);
-    }
-    loadMcp();
-  },
   async clearIssues(view) {
     const ok = await confirmDialog({ title: t('确认已处理这些配置？'), body: t('确认后可以连接。如果配置仍不完整，连接可能失败。'), confirmLabel: t('确认') });
     if (!ok) return;
@@ -310,7 +287,6 @@ function nav() {
   h('div', { class: 'nav-group' },
     navItem('hosts', t('主机'), 'server', o && h('span', { class: 'nav-count' }, o.hosts.length)),
     navItem('activity', t('活动'), 'activity', running > 0 && h('span', { class: 'nav-badge' }, running)),
-    navItem('agents', t('Agent 接入'), 'agent'),
     navItem('import', t('导入'), 'import')),
   state.view === 'hosts' && hostFilters(),
   h('div', { class: 'nav-group nav-bottom' },
@@ -330,7 +306,6 @@ function content() {
   if (!state.overview) return h('div', { class: 'main' });
   switch (state.view) {
     case 'activity': return activityView(state, actions);
-    case 'agents': return agentsView(state, actions);
     case 'import': return importView(state, actions);
     case 'settings': return state.settings ? settingsView(state, actions) : h('div', { class: 'main' });
     default: return state.overview.hosts.length ? hostsView(state, actions) : emptyHostsView(actions);

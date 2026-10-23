@@ -144,9 +144,7 @@ function detail(view, state, actions) {
     h('div', { class: 'detail-head' },
       h('div', { class: 'grow stack', style: 'gap: 4px' },
         h('h2', { class: 'detail-title selectable' }, view.name),
-        view.context.description
-          ? h('p', { class: 'note-text', style: 'color: var(--text2)' }, view.context.description)
-          : link(t('添加说明'), () => actions.edit(view)),
+        view.context.description && h('p', { class: 'note-text', style: 'color: var(--text2)' }, view.context.description),
         view.tags.length > 0 && h('div', { class: 'row wrap', style: 'gap: 4px; margin-top: 2px' },
           view.tags.map((tag) => h('span', { class: 'chip' }, tag)))),
       h('button', { type: 'button', class: 'btn', disabled: checking, onclick: () => actions.check(view) },

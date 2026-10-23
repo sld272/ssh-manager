@@ -63,7 +63,7 @@ ssh-manager exec web --project blog -- 'docker compose ps'
 
 ## 桌面端
 
-基于 Tauri 的桌面应用，与 CLI、MCP 共用同一个主机库。可以查看主机的实时在线状态（窗口打开时每隔几分钟做一次不登录的探测）、连接路径、信任与登录状态，以及可按调用方和主机筛选的操作记录；也可以从 `~/.ssh/config` 导入、修改主机地址、用户和登录方式、保存密码、在终端中打开主机（终端、Ghostty 或 iTerm），并一键把 ssh-manager 接入 Claude Code、Codex 或 Claude Desktop。设置中可以切换语言、外观和默认终端。
+基于 Tauri 的桌面应用，与 CLI、MCP 共用同一个主机库。可以查看主机的实时在线状态（窗口打开时每隔几分钟做一次不登录的探测）、连接路径、信任与登录状态，以及可按调用方和主机筛选的操作记录；也可以从 `~/.ssh/config` 导入、修改主机地址、用户和登录方式、保存密码、在终端中打开主机（终端、Ghostty 或 iTerm）。设置中可以切换语言、外观、默认终端，以及复制接入 agent 的提示词。
 
 ```sh
 scripts/install.sh                      # 桌面端使用已安装的凭据组件
@@ -72,16 +72,19 @@ cargo run --release -p ssh-manager-desktop
 
 ## 接入 agent
 
-注册本地 MCP 服务（只用 stdio，不监听网络端口）。Claude Code：
+ssh-manager 是一个本地 MCP 服务（只用 stdio，不监听网络端口）。各个 AI 工具添加 MCP 服务的方式不同，所以交给 agent 自己完成：把下面这段提示词发给它即可。桌面端的设置页也能一键复制同样的提示词，并自动填好本机的安装路径。
 
-```sh
-claude mcp add ssh-manager -- ~/.local/bin/ssh-manager mcp
-```
+```text
+请把 ssh-manager 添加为你的 MCP 服务器，这样你就能使用我在这台 Mac 上保存的 SSH 主机。
 
-其他客户端：
+- 名称：ssh-manager
+- 传输方式：stdio（本地进程，不开放网络端口）
+- 命令：ssh-manager 的绝对路径（通常是 ~/.local/bin/ssh-manager，请写成完整路径）
+- 参数：mcp
 
-```json
-{ "mcpServers": { "ssh-manager": { "command": "/absolute/path/to/ssh-manager", "args": ["mcp"] } } }
+请用你自己支持的方式添加，作用范围是当前用户而不是某个项目：可以用你自带的 `mcp add` 命令，也可以写入你的 MCP 配置文件。不要改动与 ssh-manager 无关的配置。如果需要重启你才能生效，请告诉我。
+
+添加后先调用 host_list，确认能看到我的主机。使用方法见：https://github.com/sld272/ssh-manager/blob/main/skills/ssh-manager/SKILL.md
 ```
 
 提供的工具有 `host_list`、`host_show`、`check`、`exec`、`upload`、`download` 和 `context_note`。管理凭据和主机信任仍需通过 CLI。
