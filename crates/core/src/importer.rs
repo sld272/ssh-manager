@@ -168,10 +168,10 @@ fn read_structure(
         }
         // A Match block, including one that ends an included file, lasts until the next Host line.
         if matches!(block, Block::Match) && key != "host" {
-            if let Some(m) = s.skipped.last_mut() {
-                if !m.options.contains(&words[0]) {
-                    m.options.push(words[0].clone());
-                }
+            if let Some(m) = s.skipped.last_mut()
+                && !m.options.contains(&words[0])
+            {
+                m.options.push(words[0].clone());
             }
             continue;
         }
