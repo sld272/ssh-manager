@@ -150,6 +150,8 @@ h1, h2, h3, p { margin: 0; }
 .toolbar { height: var(--toolbar); flex: none; display: flex; align-items: center; gap: 10px; padding: 0 var(--pad); border-bottom: 1px solid var(--border); background: var(--surface); }
 .toolbar-title { font-size: 15px; font-weight: 600; white-space: nowrap; }
 .toolbar-sub { font-size: 12px; color: var(--text3); white-space: nowrap; }
+/* Measured against the traffic lights: the 12px count and the 16px sidebar icon draw about 1pt above their box centre. */
+.toolbar-sub, .sidebar-toggle svg { position: relative; top: 1px; }
 .main-body { flex: 1; min-height: 0; overflow-y: auto; }
 .page { padding: var(--pad); display: flex; flex-direction: column; gap: 16px; max-width: 980px; }
 .lead { color: var(--text2); }
