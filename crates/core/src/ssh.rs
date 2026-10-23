@@ -83,6 +83,10 @@ impl OpenSsh<'_> {
         Ok(())
     }
     pub(crate) fn session(&self, h: &Host, c: &model::Connection) -> Result<Session> {
+        self.prepare(h, c, false)
+    }
+    /// An interactive session lets the person type what was not saved, so it needs no stored password.
+    fn prepare(&self, h: &Host, c: &model::Connection, interactive: bool) -> Result<Session> {
         h.validate()?;
         let mut connections = vec![];
         self.collect(c, &mut HashSet::new(), &mut connections)?;
@@ -112,9 +116,10 @@ impl OpenSsh<'_> {
                     &format!("ssh-agent 套接字不存在：{socket}，请确认提供密钥的应用正在运行"),
                 )?;
             }
-            if let Authentication::Password {
-                credential_ref: None,
-            } = conn.authentication
+            if !interactive
+                && let Authentication::Password {
+                    credential_ref: None,
+                } = conn.authentication
             {
                 return Err(Error::new("needs_interaction", "请先绑定此登录配置的密码"));
             }
@@ -133,9 +138,13 @@ impl OpenSsh<'_> {
         file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
         writeln!(
             file,
-            "Host *\n  UserKnownHostsFile {}\n  GlobalKnownHostsFile /dev/null\n  StrictHostKeyChecking yes\n  UpdateHostKeys no\n  CheckHostIP no\n  ForwardAgent no\n  ForwardX11 no\n  PermitLocalCommand no\n  ControlMaster no\n  ControlPath none\n  RequestTTY no\n  ConnectTimeout 10\n  ConnectionAttempts 1\n  ServerAliveInterval 5\n  ServerAliveCountMax 2\n  NumberOfPasswordPrompts 1\n  KbdInteractiveAuthentication no\n  LogLevel ERROR",
+            "Host *\n  UserKnownHostsFile {}\n  GlobalKnownHostsFile /dev/null\n  StrictHostKeyChecking yes\n  UpdateHostKeys no\n  CheckHostIP no\n  ForwardAgent no\n  ForwardX11 no\n  PermitLocalCommand no\n  ControlMaster no\n  ControlPath none\n  ConnectTimeout 10\n  ConnectionAttempts 1\n  ServerAliveInterval 5\n  ServerAliveCountMax 2\n  NumberOfPasswordPrompts 1\n  KbdInteractiveAuthentication no\n  LogLevel ERROR",
             config_quote(&self.store.root().join("known_hosts").to_string_lossy())
         )?;
+        // Still inside "Host *": operations never get a terminal, an interactive session does.
+        if !interactive {
+            writeln!(file, "  RequestTTY no")?;
+        }
         for conn in &connections {
             writeln!(
                 file,
@@ -203,6 +212,28 @@ impl OpenSsh<'_> {
             .env("SSH_MANAGER_AUTH_SOCKET", &session.broker.socket)
             .env("SSH_MANAGER_AUTH_TOKEN", &session.broker.token);
         cmd
+    }
+    /// Opens a login shell on the caller's own terminal and returns ssh's exit code once it ends.
+    /// Saved passwords and passphrases are answered for the person; anything else they type.
+    pub fn interactive(&self, host: &str, connection: Option<&str>) -> Result<i32> {
+        let h = self.store.host(host)?;
+        let c = h.connection(connection)?;
+        let session = self.prepare(&h, c, true)?;
+        let mut cmd = Command::new("ssh");
+        cmd.arg("-F").arg(&session.config);
+        if session.broker.answers_prompts() {
+            cmd.env("SSH_ASKPASS", &self.askpass_executable)
+                .env("SSH_ASKPASS_REQUIRE", "force")
+                .env("DISPLAY", "ssh-manager:0")
+                .env("SSH_MANAGER_ASKPASS", "1")
+                .env("SSH_MANAGER_AUTH_SOCKET", &session.broker.socket)
+                .env("SSH_MANAGER_AUTH_TOKEN", &session.broker.token);
+        }
+        let status = cmd
+            .args(["--", &session.alias])
+            .status()
+            .map_err(|e| Error::new("process_start_failed", format!("无法启动 SSH 工具：{e}")))?;
+        Ok(status.code().unwrap_or(255))
     }
     pub fn exec(
         &self,

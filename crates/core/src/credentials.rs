@@ -292,6 +292,9 @@ impl Broker {
             redactions,
         })
     }
+    pub fn answers_prompts(&self) -> bool {
+        !self.redactions.is_empty()
+    }
     pub fn redact(&self, s: &mut String) {
         for secret in &self.redactions {
             *s = s.replace(secret.as_str(), "[REDACTED]");

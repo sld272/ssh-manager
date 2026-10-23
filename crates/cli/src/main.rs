@@ -24,6 +24,12 @@ struct Cli {
 enum Commands {
     #[command(about = "启动本地 MCP 接口")]
     Mcp,
+    #[command(about = "在当前终端打开交互式 SSH 会话")]
+    Connect {
+        host: String,
+        #[arg(long, help = "登录配置名称或 ID")]
+        connection: Option<String>,
+    },
     #[command(about = "管理服务器")]
     Host {
         #[command(subcommand)]
@@ -401,6 +407,7 @@ fn dispatch(cli: &Cli, cancel: Arc<AtomicBool>) -> Result<Value> {
     };
     match &cli.command {
         Commands::Mcp => unreachable!("stdio server is dispatched before rendering"),
+        Commands::Connect { .. } => unreachable!("interactive sessions run before rendering"),
         Commands::Host { command } => match command {
             HostCommand::List { tag } => to_value(
                 store
@@ -1015,6 +1022,37 @@ fn main() {
     }) {
         eprintln!("无法处理取消信号：{e}");
         std::process::exit(2);
+    }
+    if let Commands::Connect { host, connection } = &cli.command {
+        let result = (|| {
+            // Without a terminal, ssh would have nowhere to show the shell or ask for a password.
+            error::require(
+                io::stdin().is_terminal(),
+                "needs_terminal",
+                "请在终端中运行此命令",
+            )?;
+            let root = match &cli.data_dir {
+                Some(p) => absolute(p)?,
+                None => Store::default_root()?,
+            };
+            let store = Store::open(root)?;
+            let credentials = SystemCredentials {
+                helper_executable: credential_helper()?,
+            };
+            OpenSsh {
+                store: &store,
+                credentials: &credentials,
+                askpass_executable: std::env::current_exe()?,
+            }
+            .interactive(host, connection.as_deref())
+        })();
+        match result {
+            Ok(code) => std::process::exit(code),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
+        }
     }
     if matches!(cli.command, Commands::Mcp) {
         let result = (|| {
