@@ -71,6 +71,35 @@ pub fn scan(store: &Store, host: &str, connection: Option<&str>) -> Result<Vec<H
     )?;
     Ok(keys)
 }
+/// The keys that `files` (OpenSSH known_hosts files) record for `name`, as OpenSSH files it:
+/// the HostKeyAlias, the address, or "[address]:port" off port 22.
+fn find(name: &str, files: &[std::path::PathBuf]) -> Result<Vec<HostKey>> {
+    let mut text = String::new();
+    for file in files.iter().filter(|f| f.is_file()) {
+        let mut cmd = Command::new("ssh-keygen");
+        cmd.arg("-F").arg(name).arg("-f").arg(file);
+        let r = process::run(
+            cmd,
+            None,
+            Duration::from_secs(5),
+            Arc::new(AtomicBool::new(false)),
+            131072,
+            None,
+        )?;
+        text.push_str(&String::from_utf8_lossy(&r.stdout.bytes));
+        text.push('\n');
+    }
+    // "@cert-authority *.corp.example.com ..." matches the name by pattern but is a CA key, not this host's key.
+    let plain: Vec<_> = text.lines().filter(|l| !l.starts_with('@')).collect();
+    parse_keys(&plain.join("\n"))
+}
+pub fn known_hosts_name(c: &Connection) -> String {
+    if c.port == 22 {
+        c.address.clone()
+    } else {
+        format!("[{}]:{}", c.address, c.port)
+    }
+}
 pub fn import_known_hosts(
     store: &Store,
     host: &str,
@@ -80,22 +109,7 @@ pub fn import_known_hosts(
 ) -> Result<Vec<HostKey>> {
     let h = store.host(host)?;
     let c = h.connection(connection)?;
-    let address = if c.port == 22 {
-        c.address.clone()
-    } else {
-        format!("[{}]:{}", c.address, c.port)
-    };
-    let mut cmd = Command::new("ssh-keygen");
-    cmd.arg("-F").arg(&address).arg("-f").arg(source);
-    let r = process::run(
-        cmd,
-        None,
-        Duration::from_secs(5),
-        Arc::new(AtomicBool::new(false)),
-        131072,
-        None,
-    )?;
-    let keys = parse_keys(&String::from_utf8_lossy(&r.stdout.bytes))?;
+    let keys = find(&known_hosts_name(c), &[source.to_path_buf()])?;
     error::require(
         !keys.is_empty(),
         "trusted_key_not_found",
@@ -103,6 +117,24 @@ pub fn import_known_hosts(
     )?;
     save(store, c.id, &keys, replace)?;
     Ok(keys)
+}
+/// Copies what OpenSSH already trusts for `name` into the managed known_hosts of a connection that has
+/// no key yet. Returns how many keys were copied: none when this machine never connected to the server.
+pub fn adopt(
+    store: &Store,
+    id: uuid::Uuid,
+    name: &str,
+    files: &[std::path::PathBuf],
+) -> Result<usize> {
+    let keys = find(name, files)?;
+    if !keys.is_empty() {
+        save(store, id, &keys, false)?;
+    }
+    Ok(keys.len())
+}
+/// Drops a connection's saved keys; its next connection trusts whatever key the server presents.
+pub fn forget(store: &Store, id: uuid::Uuid) -> Result<()> {
+    save(store, id, &[], true)
 }
 pub fn accept(
     store: &Store,

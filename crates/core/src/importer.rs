@@ -18,6 +18,16 @@ pub struct ImportPlan {
     pub ignored: Vec<String>,
     /// Match blocks are never evaluated, so their settings are not imported.
     pub skipped: Vec<String>,
+    /// Where OpenSSH keeps each host's known key, so applying the plan carries trust over.
+    #[serde(skip)]
+    pub known_hosts: Vec<KnownHosts>,
+}
+#[derive(Debug, Default)]
+pub struct KnownHosts {
+    pub host: String,
+    /// The name OpenSSH files the key under.
+    pub name: String,
+    pub files: Vec<PathBuf>,
 }
 struct SkippedMatch {
     location: String,
@@ -76,6 +86,7 @@ const IGNORED: &[(&str, &str)] = &[
     ("numberofpasswordprompts", MANAGED),
     ("kbdinteractiveauthentication", MANAGED),
     ("userknownhostsfile", TRUST),
+    ("hostkeyalias", TRUST),
     ("globalknownhostsfile", TRUST),
     ("stricthostkeychecking", TRUST),
     ("updatehostkeys", TRUST),
@@ -316,6 +327,7 @@ pub fn preview(source: &Path, selected: &[String]) -> Result<ImportPlan> {
         hosts: vec![],
         warnings: structure.warnings.clone(),
         ignored: vec![],
+        known_hosts: vec![],
         skipped: structure
             .skipped
             .iter()
@@ -486,6 +498,14 @@ pub fn preview(source: &Path, selected: &[String]) -> Result<ImportPlan> {
                 pending_jumps.insert(name.clone(), jumps);
             }
         }
+        plan.known_hosts.push(KnownHosts {
+            host: name.clone(),
+            name: match value("hostkeyalias") {
+                alias if !alias.is_empty() => alias,
+                _ => trust::known_hosts_name(c),
+            },
+            files: known_hosts_files(&value("userknownhostsfile"))?,
+        });
         h.source = Some(ImportSource {
             path: plan.source.clone(),
             alias: name,
@@ -517,9 +537,40 @@ pub fn preview(source: &Path, selected: &[String]) -> Result<ImportPlan> {
         .collect();
     Ok(plan)
 }
+/// `ssh -G` prints UserKnownHostsFile unquoted, so "~/My Keys/known_hosts ~/.ssh/known_hosts" reads as
+/// three words; words are joined until they name an existing file. Files that do not exist hold no keys either.
+fn known_hosts_files(value: &str) -> Result<Vec<PathBuf>> {
+    let mut files = vec![];
+    let mut current = String::new();
+    for word in value.split(' ') {
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(word);
+        let path = expand_home(&current)?;
+        if path.is_file() {
+            files.push(path);
+            current.clear();
+        }
+    }
+    Ok(files)
+}
 pub fn apply(store: &Store, plan: ImportPlan) -> Result<usize> {
-    store.import_catalog(CatalogExport {
+    let connections: Vec<_> = plan
+        .hosts
+        .iter()
+        .filter_map(|h| {
+            let known = plan.known_hosts.iter().find(|k| k.host == h.name)?;
+            Some((h.default_connection, known))
+        })
+        .collect();
+    let count = store.import_catalog(CatalogExport {
         schema_version: 1,
-        hosts: plan.hosts,
-    })
+        hosts: plan.hosts.clone(),
+    })?;
+    for (id, known) in connections {
+        // A known_hosts line with a truncated key fails to parse; that host is then trusted on its first connection.
+        let _ = trust::adopt(store, id, &known.name, &known.files);
+    }
+    Ok(count)
 }

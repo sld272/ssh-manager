@@ -243,9 +243,17 @@ with tempfile.TemporaryDirectory(prefix='sshm-verify-') as directory:
         trust_file.write_text('\n'.join([line for line in lines if not line.startswith('sshm-' + target_id + ' ')] + [f'sshm-{target_id} {public[0]} {public[1]}']) + '\n')
         r = call('check', host)
         expect('host_key_change_stops_connection', r['status'] == 'host_key_changed' and r['exit_code'] is None, r)
-        trust_file.write_text('')
+        # A saved key of one type must not let the server's key of another type in as a new key.
+        other = local / 'other-type-key'
+        subprocess.run(['ssh-keygen','-q','-t','ecdsa','-N','','-f',str(other)], check=True)
+        public = other.with_suffix('.pub').read_text().split()
+        trust_file.write_text('\n'.join([line for line in lines if not line.startswith('sshm-' + target_id + ' ')] + [f'sshm-{target_id} {public[0]} {public[1]}']) + '\n')
         r = call('check', host)
-        expect('unknown_host_requires_trust', r['status'] == 'host_key_required', r)
+        expect('other_key_type_stops_connection', r['status'] == 'host_key_changed', r)
+        trust_file.write_text('\n'.join(line for line in lines if not line.startswith('sshm-' + target_id + ' ')) + '\n')
+        r = call('check', host)
+        recorded = [line for line in trust_file.read_text().splitlines() if line.startswith('sshm-' + target_id + ' ')]
+        expect('first_connection_records_server_key', r['status'] == 'succeeded' and len(recorded) == 1 and recorded[0] in lines, r)
         trust_file.write_text(original_trust)
     finally:
         cleanup = execute(f'rm -rf -- {shlex.quote(remote)}')

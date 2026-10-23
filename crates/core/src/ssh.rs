@@ -138,7 +138,7 @@ impl OpenSsh<'_> {
         file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
         writeln!(
             file,
-            "Host *\n  UserKnownHostsFile {}\n  GlobalKnownHostsFile /dev/null\n  StrictHostKeyChecking yes\n  UpdateHostKeys no\n  CheckHostIP no\n  ForwardAgent no\n  ForwardX11 no\n  PermitLocalCommand no\n  ControlMaster no\n  ControlPath none\n  ConnectTimeout 10\n  ConnectionAttempts 1\n  ServerAliveInterval 5\n  ServerAliveCountMax 2\n  NumberOfPasswordPrompts 1\n  KbdInteractiveAuthentication no\n  LogLevel ERROR",
+            "Host *\n  UserKnownHostsFile {}\n  GlobalKnownHostsFile /dev/null\n  UpdateHostKeys no\n  CheckHostIP no\n  ForwardAgent no\n  ForwardX11 no\n  PermitLocalCommand no\n  ControlMaster no\n  ControlPath none\n  ConnectTimeout 10\n  ConnectionAttempts 1\n  ServerAliveInterval 5\n  ServerAliveCountMax 2\n  NumberOfPasswordPrompts 1\n  KbdInteractiveAuthentication no\n  LogLevel ERROR",
             config_quote(&self.store.root().join("known_hosts").to_string_lossy())
         )?;
         // Still inside "Host *": operations never get a terminal, an interactive session does.
@@ -154,6 +154,17 @@ impl OpenSsh<'_> {
                 conn.user,
                 conn.port,
                 alias(conn.id)
+            )?;
+            // A login with no saved key records the one its server presents on this first connection; once a key
+            // is saved, any other key is refused, including one of a type that was not recorded.
+            writeln!(
+                file,
+                "  StrictHostKeyChecking {}",
+                if crate::trust::list(self.store, conn.id)?.is_empty() {
+                    "accept-new"
+                } else {
+                    "yes"
+                }
             )?;
             match &conn.authentication {
                 Authentication::Password { .. } => writeln!(
@@ -386,21 +397,11 @@ impl OpenSsh<'_> {
                 Status::ResultUnknown,
                 Some("远端操作可能仍在运行，请先检查实际结果，再决定后续操作".into()),
             )
-        } else if stderr.contains("REMOTE HOST IDENTIFICATION HAS CHANGED")
-            || stderr.contains("Offending ")
-        {
+        } else if stderr.contains("Host key verification failed") {
+            // Only a saved login refuses a key: either it changed, or the server now offers a type that was never recorded.
             (
                 Status::HostKeyChanged,
                 Some("服务器身份发生变化，请核实后重新建立信任".into()),
-            )
-        } else if stderr.contains("Host key verification failed")
-            || stderr.contains("No ED25519 host key is known")
-            || stderr.contains("No ECDSA host key is known")
-            || stderr.contains("No RSA host key is known")
-        {
-            (
-                Status::HostKeyRequired,
-                Some("请导入已有的主机信任记录，或核对指纹后确认".into()),
             )
         } else if broker.denied.load(Ordering::Relaxed) {
             (
@@ -435,7 +436,6 @@ impl OpenSsh<'_> {
         let phase = if matches!(
             status,
             Status::HostKeyChanged
-                | Status::HostKeyRequired
                 | Status::NeedsInteraction
                 | Status::AuthenticationFailed
                 | Status::ConnectionFailed

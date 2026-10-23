@@ -183,6 +183,28 @@ fn references(h: &crate::Host) -> Vec<String> {
         })
         .collect()
 }
+/// Saves an edited host. Secrets its logins no longer use are deleted, and a login that now reaches
+/// another address or port forgets the old server's key. Returns the references the credential store could not delete.
+pub fn update_host(
+    store: &crate::Store,
+    credentials: &dyn CredentialStore,
+    host: &crate::Host,
+) -> Result<Vec<String>> {
+    let old = store.host(&host.id.to_string())?;
+    store.save(host)?;
+    for c in &host.connections {
+        if let Some(before) = old.connections.iter().find(|o| o.id == c.id)
+            && (before.address != c.address || before.port != c.port)
+        {
+            crate::trust::forget(store, c.id)?;
+        }
+    }
+    let kept = references(host);
+    Ok(references(&old)
+        .into_iter()
+        .filter(|r| !kept.contains(r) && credentials.delete(r).is_err())
+        .collect())
+}
 /// Removes the host, then deletes its saved secrets that no remaining host references.
 /// Returns the removed host and the references the credential store could not delete.
 pub fn remove_host(
@@ -336,4 +358,36 @@ pub fn askpass(prompt: &str) -> Result<()> {
     )?;
     std::io::stdout().write_all(&secret)?;
     Ok(())
+}
+/// Whether a private key file is protected by a passphrase, so saving one would help.
+/// A file that cannot be read reports false; connecting reports the missing key instead.
+pub fn key_has_passphrase(path: &str) -> bool {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    // PKCS#8 and the older PEM formats state encryption in their headers.
+    if text.contains("-----BEGIN ENCRYPTED PRIVATE KEY-----")
+        || text.contains("Proc-Type: 4,ENCRYPTED")
+    {
+        return true;
+    }
+    // The OpenSSH format starts with "openssh-key-v1\0", then the cipher name, which is "none" without a passphrase.
+    let body: String = text
+        .lines()
+        .skip_while(|l| !l.starts_with("-----BEGIN OPENSSH PRIVATE KEY-----"))
+        .skip(1)
+        .take_while(|l| !l.starts_with("-----END"))
+        .collect();
+    let Ok(bytes) = STANDARD.decode(body) else {
+        return false;
+    };
+    let Some(rest) = bytes.strip_prefix(b"openssh-key-v1\0") else {
+        return false;
+    };
+    let Some((len, rest)) = rest.split_first_chunk::<4>() else {
+        return false;
+    };
+    rest.get(..u32::from_be_bytes(*len) as usize)
+        .is_some_and(|cipher| cipher != b"none")
 }

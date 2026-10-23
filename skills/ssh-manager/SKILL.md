@@ -9,7 +9,7 @@ description: 使用本机 ssh-manager 管理已配置的 SSH 服务器，读取�
 
 使用 `exec NAME --json -- '完整命令'`，项目操作优先 `--project PROJECT` 或绝对 `--cwd`。按任务设置 `--timeout`；可用 `--reason` 记录不含秘密的目的。不要向命令参数、日志、模型上下文或导出配置传入 SSH 密码和私钥正文。凭据由用户在本机 `credential set` 绑定。
 
-以 JSON 的 status、phase、exit_code 判断结果。CLI 非零退出时也应读取 JSON。认证或主机信任问题交给用户处理，不自动忽略公钥变化。超时、取消、断线的 result_unknown 不证明远端停止，不自动重试部署、重启等有副作用的操作；先检查实际状态。
+以 JSON 的 status、phase、exit_code 判断结果。CLI 非零退出时也应读取 JSON。首次连接会自动记录服务器身份；认证失败或 host_key_changed 交给用户处理，不要设法绕过公钥变化。超时、取消、断线的 result_unknown 不证明远端停止，不自动重试部署、重启等有副作用的操作；先检查实际状态。
 
 上传普通文件使用完整远端文件名；目录使用 `--mode contents` 合并内容，不会删除多余文件。下载目前支持单个普通文件，需要完整本地文件名。传输失败可能留有部分远端内容，先核验再重试。不要把上传成功当作部署成功。
 

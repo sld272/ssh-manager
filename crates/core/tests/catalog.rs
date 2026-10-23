@@ -262,3 +262,86 @@ fn first_use_catalog_creation_is_serialized_across_callers() {
         assert!(thread.join().unwrap().is_empty());
     }
 }
+#[test]
+fn import_carries_over_known_hosts_and_edits_forget_the_old_server() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config");
+    let known = dir.path().join("known hosts");
+    let key = "AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
+    fs::write(
+        &known,
+        format!("@cert-authority *.test ssh-ed25519 {key}\n[web.test]:2222 ssh-ed25519 {key}\n"),
+    )
+    .unwrap();
+    fs::write(
+        &config,
+        format!(
+            "Host web\n HostName web.test\n Port 2222\n User user\n UserKnownHostsFile \"{}\"\nHost new\n HostName new.test\n User user\n UserKnownHostsFile \"{}\"\n",
+            known.display(),
+            known.display()
+        ),
+    )
+    .unwrap();
+    let store = Store::open(dir.path().join("data")).unwrap();
+    importer::apply(&store, importer::preview(&config, &[]).unwrap()).unwrap();
+    let web = store.host("web").unwrap();
+    let keys = trust::list(&store, web.default_connection).unwrap();
+    assert_eq!(keys.len(), 1);
+    assert_eq!(keys[0].key, key);
+    let new = store.host("new").unwrap();
+    assert!(
+        trust::list(&store, new.default_connection)
+            .unwrap()
+            .is_empty()
+    );
+
+    struct Keychain(std::cell::RefCell<Vec<String>>);
+    impl CredentialStore for Keychain {
+        fn get(&self, _: &str) -> Result<zeroize::Zeroizing<String>> {
+            unreachable!()
+        }
+        fn set(&self, _: &str, _: &str) -> Result<()> {
+            unreachable!()
+        }
+        fn delete(&self, reference: &str) -> Result<()> {
+            self.0.borrow_mut().push(reference.into());
+            Ok(())
+        }
+    }
+    let keychain = Keychain(Default::default());
+    let mut edited = web.clone();
+    edited.connections[0].authentication = Authentication::Password {
+        credential_ref: Some("saved".into()),
+    };
+    credentials::update_host(&store, &keychain, &edited).unwrap();
+    assert_eq!(
+        trust::list(&store, web.default_connection).unwrap().len(),
+        1
+    );
+    edited.name = "renamed".into();
+    edited.connections[0].port = 22;
+    edited.connections[0].authentication = Authentication::Agent;
+    credentials::update_host(&store, &keychain, &edited).unwrap();
+    assert!(
+        trust::list(&store, web.default_connection)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(*keychain.0.borrow(), vec!["saved".to_string()]);
+}
+#[test]
+fn only_keys_with_a_passphrase_ask_for_one() {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, passphrase) in [("plain", ""), ("locked", "secret phrase")] {
+        let status = std::process::Command::new("ssh-keygen")
+            .args(["-q", "-t", "ed25519", "-N", passphrase, "-f"])
+            .arg(dir.path().join(name))
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+    let path = |name: &str| dir.path().join(name).to_string_lossy().into_owned();
+    assert!(!credentials::key_has_passphrase(&path("plain")));
+    assert!(credentials::key_has_passphrase(&path("locked")));
+    assert!(!credentials::key_has_passphrase(&path("missing")));
+}

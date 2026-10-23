@@ -281,10 +281,7 @@ impl OpenSsh<'_> {
         } else if !interrupted
             && !matches!(
                 result.status,
-                Status::HostKeyRequired
-                    | Status::HostKeyChanged
-                    | Status::AuthenticationFailed
-                    | Status::NeedsInteraction
+                Status::HostKeyChanged | Status::AuthenticationFailed | Status::NeedsInteraction
             )
         {
             result.status = Status::TransferFailed;

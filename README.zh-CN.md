@@ -7,8 +7,8 @@
 ssh-manager 把服务器、登录方式、凭据和项目说明集中管理。agent 可以自己找到要操作的机器并执行命令，你不用再往对话里贴 IP、端口、账号或密码。它调用系统自带的 OpenSSH，服务器上不需要安装任何东西。
 
 - **自己的主机库**：从 `~/.ssh/config` 导入或手动添加。导入后以 ssh-manager 的主机库为准，不会改动你的 SSH 配置文件。
-- **凭据留在本机**：密码和密钥口令存在系统钥匙串里。agent 可以使用已保存的登录方式，但看不到密码本身。
-- **独立的主机信任**：ssh-manager 使用自己的 known_hosts，服务器身份变化时会停止连接。
+- **凭据留在本机**：密码和密钥密码存在系统钥匙串里。agent 可以使用已保存的登录方式，但看不到密码本身。
+- **独立的主机信任**：ssh-manager 使用自己的 known_hosts。导入的主机沿用 `~/.ssh/known_hosts` 里的记录，新服务器在首次连接时记录身份，之后身份变化会停止连接。
 - **为 agent 设计**：所有命令都有 JSON 输出，另有本地 MCP 服务提供同样的能力。结果会明确区分成功、失败和结果未知。
 - **主机上下文**：项目路径、用途说明和 agent 记录随主机一起保存，新会话可以接着上次的进度。
 
@@ -33,12 +33,11 @@ ssh-manager host import --select web --apply
 # 或者手动添加
 ssh-manager host add web --address example.com --user deploy --key ~/.ssh/id_ed25519
 
-# 信任服务器：沿用 ~/.ssh/known_hosts，或扫描后核对指纹再确认
-ssh-manager trust import web
-ssh-manager trust scan web
-ssh-manager trust accept web --fingerprint 'SHA256:...'
+# 可选：在首次连接前就固定服务器公钥，而不是首次连接时记录
+ssh-manager trust import web                                # 来自 ~/.ssh/known_hosts
+ssh-manager trust accept web --fingerprint 'SHA256:...'     # 你核对过的指纹
 
-# 保存密码或密钥口令（交互输入，不回显）
+# 保存密码或密钥密码（交互输入，不回显）
 ssh-manager credential set web
 ssh-manager credential set web --passphrase
 
@@ -64,7 +63,7 @@ ssh-manager exec web --project blog -- 'docker compose ps'
 
 ## 桌面端
 
-基于 Tauri 的桌面应用，与 CLI、MCP 共用同一个主机库。可以查看主机、连接路径、信任与登录状态、项目路径和 agent 记录，以及操作记录；也可以从 `~/.ssh/config` 导入、核对服务器指纹、保存密码、在终端中打开主机（终端、Ghostty 或 iTerm），并查看接入 agent 的方式。设置中可以切换语言、外观和默认终端。
+基于 Tauri 的桌面应用，与 CLI、MCP 共用同一个主机库。可以查看主机、连接路径、信任与登录状态、项目路径和 agent 记录，以及操作记录；也可以从 `~/.ssh/config` 导入、修改主机地址、用户和登录方式、保存密码、在终端中打开主机（终端、Ghostty 或 iTerm），并查看接入 agent 的方式。设置中可以切换语言、外观和默认终端。
 
 ```sh
 scripts/install.sh                      # 桌面端使用已安装的凭据组件

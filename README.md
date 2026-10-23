@@ -8,7 +8,7 @@ ssh-manager keeps your servers, logins, credentials and project notes in one pla
 
 - **Your own host catalog.** Import hosts from `~/.ssh/config` or add them by hand. After import, ssh-manager uses its own catalog and never edits your SSH files.
 - **Credentials stay local.** Passwords and key passphrases live in the system keychain. Agents use saved logins but never see the secrets.
-- **Separate host trust.** ssh-manager keeps its own known_hosts and stops if a server's identity changes.
+- **Separate host trust.** ssh-manager keeps its own known_hosts. Imported hosts bring their records from `~/.ssh/known_hosts`, a new server is recorded on its first connection, and connections stop if a server's identity changes.
 - **Built for agents.** Every command has JSON output, and a local MCP server exposes the same features. Results report clearly whether a command succeeded, failed, or has an unknown outcome.
 - **Context for each host.** Project paths, descriptions and agent notes are saved with each host, so a new session can pick up where the last one left off.
 
@@ -33,10 +33,9 @@ ssh-manager host import --select web --apply
 # Or add one by hand
 ssh-manager host add web --address example.com --user deploy --key ~/.ssh/id_ed25519
 
-# Trust the server: reuse ~/.ssh/known_hosts, or scan and confirm a fingerprint
-ssh-manager trust import web
-ssh-manager trust scan web
-ssh-manager trust accept web --fingerprint 'SHA256:...'
+# Optional: pin the server key before the first connection instead of recording it then
+ssh-manager trust import web                                # from ~/.ssh/known_hosts
+ssh-manager trust accept web --fingerprint 'SHA256:...'     # a fingerprint you verified
 
 # Save a password or key passphrase (prompted, never echoed)
 ssh-manager credential set web
@@ -64,7 +63,7 @@ Add `--json` to any command for structured output. See `ssh-manager --help` for 
 
 ## Desktop app
 
-A Tauri desktop app shares the same catalog as the CLI and MCP server. It shows your hosts, connection paths, trust and login status, project paths and agent notes, plus the operation history. You can also import from `~/.ssh/config`, confirm server fingerprints, save passwords, open a host in your terminal (Terminal, Ghostty or iTerm), and see how to connect agents. Settings cover language, appearance and the default terminal.
+A Tauri desktop app shares the same catalog as the CLI and MCP server. It shows your hosts, connection paths, trust and login status, project paths and agent notes, plus the operation history. You can also import from `~/.ssh/config`, edit a host's address, user and login method, save passwords, open a host in your terminal (Terminal, Ghostty or iTerm), and see how to connect agents. Settings cover language, appearance and the default terminal.
 
 ```sh
 scripts/install.sh                      # the app uses the installed credentials helper

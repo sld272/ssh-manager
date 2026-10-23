@@ -212,6 +212,7 @@ pub enum Status {
     CommandFailed,
     ConnectionFailed,
     AuthenticationFailed,
+    /// Recorded by releases that needed a server confirmed before its first connection; their history still reads.
     HostKeyRequired,
     HostKeyChanged,
     NeedsInteraction,
