@@ -403,17 +403,24 @@ pub fn preview(source: &Path, selected: &[String]) -> Result<ImportPlan> {
         // OpenSSH 9.9 prints these as true/false; earlier releases print yes/no.
         let enabled = |k: &str| !matches!(value(k).as_str(), "no" | "false");
         let preferred = value("preferredauthentications");
-        let method = match preferred.as_str() {
+        let allowed: Vec<_> = match preferred.as_str() {
             "" => "publickey,password",
             v => v,
         }
         .split(',')
-        .find(|m| {
+        .filter(|m| {
             (*m == "publickey" && enabled("pubkeyauthentication"))
                 || (*m == "password" && enabled("passwordauthentication"))
         })
-        .map(str::to_owned);
-        let authentication = if method.as_deref() == Some("password") {
+        .map(str::to_owned)
+        .collect();
+        let method = allowed.first().cloned();
+        // With no key or agent named, OpenSSH tries whatever default keys exist and then asks for the
+        // password; the password is what such a host is actually logged in with.
+        let falls_back_to_password = !explicit_keys
+            && value("identityagent").is_empty()
+            && allowed.iter().any(|m| m == "password");
+        let authentication = if method.as_deref() == Some("password") || falls_back_to_password {
             Authentication::Password {
                 credential_ref: None,
             }

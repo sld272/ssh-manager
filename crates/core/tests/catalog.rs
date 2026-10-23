@@ -175,14 +175,11 @@ fn static_import_preserves_defaults_multivalue_keys_and_jump_dependencies() {
     assert_eq!(web.connections[0].port, 2222);
     assert_eq!(web.connections[0].jumps, vec![jump.default_connection]);
     assert!(web.connections[0].issues.is_empty());
-    // Without an explicit IdentityFile, only OpenSSH default keys present on this machine are kept.
-    match &jump.connections[0].authentication {
-        Authentication::Agent => {}
-        Authentication::Key { paths, .. } => {
-            assert!(paths.iter().all(|p| std::path::Path::new(p).is_file()))
-        }
-        other => panic!("unexpected authentication {other:?}"),
-    }
+    // Naming no key, OpenSSH ends up asking for the password.
+    assert!(matches!(
+        jump.connections[0].authentication,
+        Authentication::Password { .. }
+    ));
     assert!(jump.connections[0].issues.is_empty());
     match &web.connections[0].authentication {
         Authentication::Key { paths, .. } => assert_eq!(paths.len(), 2),
@@ -344,4 +341,31 @@ fn only_keys_with_a_passphrase_ask_for_one() {
     assert!(!credentials::key_has_passphrase(&path("plain")));
     assert!(credentials::key_has_passphrase(&path("locked")));
     assert!(!credentials::key_has_passphrase(&path("missing")));
+}
+#[test]
+fn hosts_naming_no_key_import_as_password_unless_keys_are_required() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("config");
+    fs::write(
+        &config,
+        "Host plain\n HostName 192.0.2.1\nHost keys-only\n HostName 192.0.2.2\n PasswordAuthentication no\nHost agent\n HostName 192.0.2.3\n IdentityAgent /tmp/agent.sock\n",
+    )
+    .unwrap();
+    let plan = importer::preview(&config, &[]).unwrap();
+    let auth = |name: &str| {
+        plan.hosts
+            .iter()
+            .find(|h| h.name == name)
+            .unwrap()
+            .connections[0]
+            .authentication
+            .clone()
+    };
+    assert!(matches!(auth("plain"), Authentication::Password { .. }));
+    assert!(!matches!(
+        auth("keys-only"),
+        Authentication::Password { .. }
+    ));
+    // Default keys that exist on this machine are kept next to the agent.
+    assert!(!matches!(auth("agent"), Authentication::Password { .. }));
 }
