@@ -15,4 +15,5 @@ serde_json.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 zeroize.workspace = true
+tempfile.workspace = true
 tauri = { version = "2", features = [] }

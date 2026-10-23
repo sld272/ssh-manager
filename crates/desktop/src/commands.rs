@@ -356,3 +356,170 @@ pub async fn agents() -> Result<Agents> {
     })
     .await
 }
+
+/// Window preferences, kept beside the host catalog so they survive reinstalling the app.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Settings {
+    /// "system", "zh-CN" or "en".
+    language: String,
+    /// "system", "light" or "dark".
+    theme: String,
+    /// One of TERMINALS' ids.
+    terminal: String,
+}
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            language: "system".into(),
+            theme: "system".into(),
+            terminal: "terminal".into(),
+        }
+    }
+}
+fn settings_path() -> Result<PathBuf> {
+    Ok(Store::default_root()?.join("desktop.json"))
+}
+fn load_settings() -> Result<Settings> {
+    match std::fs::read_to_string(settings_path()?) {
+        Ok(text) => Ok(serde_json::from_str(&text)?),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Settings::default()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+const TERMINALS: &[(&str, &str, &str)] = &[
+    (
+        "terminal",
+        "Terminal",
+        "/System/Applications/Utilities/Terminal.app",
+    ),
+    ("ghostty", "Ghostty", "/Applications/Ghostty.app"),
+    ("iterm", "iTerm", "/Applications/iTerm.app"),
+];
+#[derive(Serialize)]
+pub struct TerminalApp {
+    id: &'static str,
+    name: &'static str,
+    available: bool,
+}
+#[derive(Serialize)]
+pub struct Environment {
+    ssh_version: Option<String>,
+    credential_helper_available: bool,
+    data_dir: String,
+    command: Option<String>,
+    version: &'static str,
+}
+#[derive(Serialize)]
+pub struct SettingsView {
+    settings: Settings,
+    terminals: Vec<TerminalApp>,
+    environment: Environment,
+}
+fn installed_command() -> Result<Option<PathBuf>> {
+    let command = importer::home()?.join(".local/bin/ssh-manager");
+    Ok(command.is_file().then_some(command))
+}
+
+#[tauri::command]
+pub async fn settings_get() -> Result<SettingsView> {
+    blocking(|| {
+        Ok(SettingsView {
+            settings: load_settings()?,
+            terminals: TERMINALS
+                .iter()
+                .map(|(id, name, path)| TerminalApp {
+                    id,
+                    name,
+                    available: std::path::Path::new(path).exists(),
+                })
+                .collect(),
+            environment: Environment {
+                ssh_version: ssh_version(),
+                credential_helper_available: credential_helper()?.is_file(),
+                data_dir: Store::default_root()?.to_string_lossy().into_owned(),
+                command: installed_command()?.map(|p| p.to_string_lossy().into_owned()),
+                version: env!("CARGO_PKG_VERSION"),
+            },
+        })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn settings_set(settings: Settings) -> Result<Settings> {
+    blocking(move || {
+        error::require(
+            TERMINALS.iter().any(|(id, ..)| *id == settings.terminal),
+            "invalid_settings",
+            "不支持此终端",
+        )?;
+        let path = settings_path()?;
+        store::private_dir(path.parent().expect("settings live in the data directory"))?;
+        std::fs::write(&path, serde_json::to_string_pretty(&settings)?)?;
+        Ok(settings)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn reveal_data_dir() -> Result<()> {
+    blocking(|| {
+        std::process::Command::new("open")
+            .arg(Store::default_root()?)
+            .status()?;
+        Ok(())
+    })
+    .await
+}
+
+/// Opens the chosen terminal on `ssh-manager connect`, so the session uses this catalog's
+/// trust, jump hosts and saved passwords without any secret passing through the terminal.
+#[tauri::command]
+pub async fn open_terminal(host: String) -> Result<()> {
+    blocking(move || {
+        let h = store()?.host(&host)?;
+        let command = installed_command()?.ok_or_else(|| {
+            Error::new(
+                "command_unavailable",
+                "未找到 ssh-manager 命令行工具，请先安装后再在终端中连接",
+            )
+        })?;
+        let terminal = load_settings()?.terminal;
+        let (_, _, app) = TERMINALS
+            .iter()
+            .find(|(id, ..)| *id == terminal)
+            .expect("settings_set accepts only listed terminals");
+        error::require(
+            std::path::Path::new(app).exists(),
+            "terminal_unavailable",
+            "未找到所选终端，请在设置中重新选择",
+        )?;
+        // Terminal and iTerm run a .command file directly; the script removes itself before connecting.
+        let script = tempfile::Builder::new()
+            .prefix("ssh-manager-")
+            .suffix(".command")
+            .tempfile()?;
+        let (mut file, path) = script.keep().map_err(|e| Error::from(e.error))?;
+        use std::{io::Write, os::unix::fs::PermissionsExt};
+        writeln!(
+            file,
+            "#!/bin/sh\nrm -f -- \"$0\"\nexec {} connect {}",
+            ssh::shell_quote(&command.to_string_lossy()),
+            h.id
+        )?;
+        file.set_permissions(std::fs::Permissions::from_mode(0o700))?;
+        drop(file);
+        let mut open = std::process::Command::new("open");
+        if terminal == "ghostty" {
+            open.args(["-na", app, "--args", "-e"]).arg(&path);
+        } else {
+            open.args(["-a", app]).arg(&path);
+        }
+        let status = open.status()?;
+        error::require(status.success(), "terminal_failed", "无法打开终端")?;
+        Ok(())
+    })
+    .await
+}

@@ -36,7 +36,7 @@
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #1C1C1E;
     --surface: #232326;
     --nav: #18181A;
@@ -67,6 +67,36 @@
     color-scheme: dark;
   }
 }
+:root[data-theme="dark"] {
+  --bg: #1C1C1E;
+  --surface: #232326;
+  --nav: #18181A;
+  --border: #333338;
+  --border-strong: #45454B;
+  --divider: #2C2C30;
+  --ink: #F2F2F3;
+  --body2: #D4D5DA;
+  --text2: #B4B5BB;
+  --text3: #A2A3AA;
+  --chip: #2E2E32;
+  --hover: rgba(255, 255, 255, 0.05);
+  --accent: #3462D9;
+  --accent-text: #8EA8FF;
+  --accent-soft: #233050;
+  --accent-ring: #3A4E86;
+  --accent-ink: #C2D0FF;
+  --ok: #63D394;
+  --ok-bg: #173326;
+  --warn: #F0B45C;
+  --warn-bg: #3A2C14;
+  --warn-ink: #F5CB8D;
+  --err: #FF8F86;
+  --err-bg: #3D1D1B;
+  --err-border: #6B3330;
+  --brand: #F2F2F3;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  color-scheme: dark;
+}
 
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -91,8 +121,11 @@ h1, h2, h3, p { margin: 0; }
 
 /* Shell: fixed panes that each scroll, like a native split view. */
 .app { height: 100vh; display: grid; grid-template-columns: var(--nav-width) minmax(0, 1fr); }
-.nav { background: var(--nav); border-right: 1px solid var(--border); padding: 0 10px 12px; display: flex; flex-direction: column; gap: 20px; overflow-y: auto; min-height: 0; }
-.nav-top { height: var(--toolbar); flex: none; align-self: stretch; }
+.nav { background: var(--nav); border-right: 1px solid var(--border); padding: 0 10px 10px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; min-height: 0; }
+/* Room for the traffic lights; with the gap below, the first item starts at the toolbar's bottom edge. */
+.nav-top { height: calc(var(--toolbar) - 16px); flex: none; align-self: stretch; }
+.nav-bottom { margin-top: auto; }
+.nav-item.warn { color: var(--warn); }
 .nav-group { display: flex; flex-direction: column; gap: 1px; }
 .nav-label { padding: 0 10px 4px; font-size: 11px; font-weight: 600; color: var(--text3); }
 .nav-item { display: flex; align-items: center; gap: 9px; width: 100%; height: 30px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; color: var(--body2); text-align: left; }
@@ -104,24 +137,14 @@ h1, h2, h3, p { margin: 0; }
 .tag-list { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 10px; }
 .tag { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border-strong); color: var(--body2); background: transparent; }
 .tag[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent-ring); color: var(--accent-ink); }
-.nav-foot { margin-top: auto; padding: 10px 10px 0; border-top: 1px solid var(--border); display: flex; align-items: flex-start; gap: 8px; font-size: 11px; color: var(--text3); }
-.nav-foot .dot { margin-top: 5px; }
 .dot { width: 7px; height: 7px; border-radius: 999px; flex: none; background: var(--text3); }
 .dot.ok { background: var(--ok); }
 .dot.warn { background: var(--warn); }
 .dot.err { background: var(--err); }
 .dot.hollow { background: transparent; border: 1.5px solid var(--text3); }
 
-/* A narrow window keeps the sidebar as an icon rail, wide enough for the window's traffic lights. */
-@media (max-width: 899px) {
-  :root { --nav-width: 76px; }
-  .nav { padding: 0 8px 12px; align-items: center; }
-  .nav-item { width: 40px; height: 34px; padding: 0; justify-content: center; }
-  .nav-item .label, .nav-item .nav-count, .nav-filters, .nav-foot .label { display: none; }
-  .nav-item .nav-badge { position: absolute; transform: translate(11px, -9px); padding: 0; width: 8px; height: 8px; font-size: 0; }
-  .nav-item { position: relative; }
-  .nav-foot { padding: 10px 0 0; justify-content: center; border-top: 0; }
-}
+.icon-btn.sidebar-toggle { display: none; }
+
 
 .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .toolbar { height: var(--toolbar); flex: none; display: flex; align-items: center; gap: 10px; padding: 0 var(--pad); border-bottom: 1px solid var(--border); background: var(--surface); }
@@ -265,6 +288,14 @@ details summary { cursor: pointer; font-weight: 600; font-size: 12px; }
 .can-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
 .can-list li { display: flex; gap: 8px; align-items: center; }
 
+/* Settings */
+.settings { max-width: 640px; gap: 20px; }
+.settings-group { display: flex; flex-direction: column; gap: 8px; }
+.settings-card > * + * { border-top: 1px solid var(--divider); }
+.setting-row { display: flex; align-items: center; gap: 16px; padding: 10px 14px; min-height: 48px; }
+.setting-row .stack { gap: 2px; }
+.select { height: 28px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--ink); }
+
 /* Dialog */
 dialog { border: 0; padding: 0; border-radius: 14px; background: var(--surface); color: var(--ink); width: min(480px, calc(100vw - 32px)); box-shadow: 0 20px 56px rgba(0, 0, 0, 0.24); }
 dialog::backdrop { background: rgba(10, 10, 12, 0.32); }
@@ -284,3 +315,13 @@ dialog::backdrop { background: rgba(10, 10, 12, 0.32); }
 
 #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 10; pointer-events: none; }
 #toast > div { padding: 8px 14px; border-radius: 8px; background: var(--brand); color: var(--surface); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); font-size: 12px; }
+
+/* Last, so it overrides the base rules above. A narrow window hides the sidebar; the toolbar button shows it floating over the content. */
+@media (max-width: 899px) {
+  .app { grid-template-columns: minmax(0, 1fr); }
+  .nav { position: fixed; z-index: 20; left: 0; top: 0; bottom: 0; width: 220px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2); display: none; }
+  .app.nav-open .nav { display: flex; }
+  .icon-btn.sidebar-toggle { display: inline-flex; margin-left: -6px; }
+  /* Leaves room for the traffic lights, which now sit over the toolbar. */
+  .toolbar { padding-left: 84px; }
+}

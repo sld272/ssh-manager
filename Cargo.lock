@@ -3821,6 +3821,7 @@ dependencies = [
  "ssh-manager-core",
  "tauri",
  "tauri-build",
+ "tempfile",
  "uuid",
  "zeroize",
 ]

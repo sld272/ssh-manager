@@ -1,3 +1,5 @@
+import { t } from './i18n.js';
+
 // Builds DOM nodes. Strings always become text nodes, so host notes or remote output never turn into markup.
 export function h(tag, props, ...children) {
   const el = document.createElement(tag);
@@ -50,6 +52,8 @@ const PATHS = {
   network: '<circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><circle cx="12" cy="5" r="2"/><circle cx="12" cy="19" r="2"/>',
   copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
   trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+  sidebar: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
 };
 
 // Icon markup comes only from the constants above, never from data.
@@ -68,11 +72,18 @@ export function icon(name, size = 16, stroke = 1.8) {
   return svg;
 }
 
+// The sidebar toggle only shows in a narrow window; app.js owns the sidebar and listens for these.
+const sidebar = (action) => () => window.dispatchEvent(new CustomEvent('sidebar', { detail: action }));
+
 // A view: a toolbar that also drags the window (the title bar is hidden), then the view's own panes.
 export function screen({ title, sub, tools, body, footer }) {
   const drag = { 'data-tauri-drag-region': true };
   return h('div', { class: 'main' },
     h('header', { class: 'toolbar', ...drag },
+      h('button', {
+        type: 'button', class: 'icon-btn sidebar-toggle', 'aria-label': t('显示边栏'), title: t('显示边栏'),
+        onclick: sidebar('toggle'), onmouseenter: sidebar('hover'), onmouseleave: sidebar('leave'),
+      }, icon('sidebar', 16)),
       h('h1', { class: 'toolbar-title', ...drag }, title),
       sub && h('span', { class: 'toolbar-sub', ...drag }, sub),
       h('div', { class: 'spacer', ...drag }),

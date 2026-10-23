@@ -1,3 +1,5 @@
+import { errorMessage } from './i18n.js';
+
 // Every call returns the core library's JSON; failures reject with { code, message }.
 const invoke = (command, args) => window.__TAURI__.core.invoke(command, args);
 
@@ -17,8 +19,11 @@ export const api = {
   importPreview: (path) => invoke('import_preview', { path }),
   importApply: (path, names) => invoke('import_apply', { path, names }),
   agents: () => invoke('agents'),
+  settingsGet: () => invoke('settings_get'),
+  settingsSet: (settings) => invoke('settings_set', { settings }),
+  revealDataDir: () => invoke('reveal_data_dir'),
+  openTerminal: (host) => invoke('open_terminal', { host }),
+  setTheme: (theme) => window.__TAURI__.window.getCurrentWindow().setTheme(theme),
 };
 
-export function message(error) {
-  return error?.message ?? String(error);
-}
+export const message = errorMessage;

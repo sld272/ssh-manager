@@ -44,6 +44,7 @@ ssh-manager credential set web --passphrase
 
 # 开始使用
 ssh-manager check web
+ssh-manager connect web            # 交互式登录，自动填入已保存的密码
 ssh-manager exec web -- 'df -h'
 ssh-manager upload web ./dist /srv/site --mode contents
 ssh-manager download web /var/log/app.log ./app.log
@@ -63,7 +64,7 @@ ssh-manager exec web --project blog -- 'docker compose ps'
 
 ## 桌面端
 
-基于 Tauri 的桌面应用，与 CLI、MCP 共用同一个主机库。可以查看主机、连接路径、信任与登录状态、项目路径和 agent 记录，以及操作记录；也可以从 `~/.ssh/config` 导入、核对服务器指纹、保存密码，并查看接入 agent 的方式。
+基于 Tauri 的桌面应用，与 CLI、MCP 共用同一个主机库。可以查看主机、连接路径、信任与登录状态、项目路径和 agent 记录，以及操作记录；也可以从 `~/.ssh/config` 导入、核对服务器指纹、保存密码、在终端中打开主机（终端、Ghostty 或 iTerm），并查看接入 agent 的方式。设置中可以切换语言、外观和默认终端。
 
 ```sh
 scripts/install.sh                      # 桌面端使用已安装的凭据组件

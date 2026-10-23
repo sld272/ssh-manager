@@ -24,6 +24,10 @@ fn main() {
             commands::import_preview,
             commands::import_apply,
             commands::agents,
+            commands::settings_get,
+            commands::settings_set,
+            commands::reveal_data_dir,
+            commands::open_terminal,
         ])
         .run(tauri::generate_context!())
         .expect("ssh-manager could not start its window");

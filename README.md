@@ -12,7 +12,7 @@ ssh-manager keeps your servers, logins, credentials and project notes in one pla
 - **Built for agents.** Every command has JSON output, and a local MCP server exposes the same features. Results report clearly whether a command succeeded, failed, or has an unknown outcome.
 - **Context for each host.** Project paths, descriptions and agent notes are saved with each host, so a new session can pick up where the last one left off.
 
-> Status: early development. Verified on a macOS client against Linux servers. On Linux clients, password storage is not available yet (keys and ssh-agent work). Windows is not supported yet, and the desktop app is a first preview. CLI and app text is currently in Chinese.
+> Status: early development. Verified on a macOS client against Linux servers. On Linux clients, password storage is not available yet (keys and ssh-agent work). Windows is not supported yet, and the desktop app is a first preview. CLI messages are currently in Chinese; the app can switch between Chinese and English.
 
 ## Install
 
@@ -44,6 +44,7 @@ ssh-manager credential set web --passphrase
 
 # Use it
 ssh-manager check web
+ssh-manager connect web            # interactive shell, saved password filled in
 ssh-manager exec web -- 'df -h'
 ssh-manager upload web ./dist /srv/site --mode contents
 ssh-manager download web /var/log/app.log ./app.log
@@ -63,7 +64,7 @@ Add `--json` to any command for structured output. See `ssh-manager --help` for 
 
 ## Desktop app
 
-A Tauri desktop app shares the same catalog as the CLI and MCP server. It shows your hosts, connection paths, trust and login status, project paths and agent notes, plus the operation history. You can also import from `~/.ssh/config`, confirm server fingerprints, save passwords, and see how to connect agents.
+A Tauri desktop app shares the same catalog as the CLI and MCP server. It shows your hosts, connection paths, trust and login status, project paths and agent notes, plus the operation history. You can also import from `~/.ssh/config`, confirm server fingerprints, save passwords, open a host in your terminal (Terminal, Ghostty or iTerm), and see how to connect agents. Settings cover language, appearance and the default terminal.
 
 ```sh
 scripts/install.sh                      # the app uses the installed credentials helper
