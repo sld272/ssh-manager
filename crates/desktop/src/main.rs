@@ -41,16 +41,17 @@ fn main() {
             commands::host_update,
             commands::host_clear_issues,
             commands::host_remove,
-            commands::project_save,
-            commands::project_remove,
             commands::import_preview,
             commands::import_apply,
-            commands::agents,
             commands::settings_get,
             commands::settings_set,
             commands::reveal_data_dir,
             commands::open_terminal,
             commands::pick_key_file,
+            commands::key_agents,
+            commands::probe,
+            commands::mcp_clients,
+            commands::mcp_set,
         ])
         .run(tauri::generate_context!())
         .expect("ssh-manager could not start its window");

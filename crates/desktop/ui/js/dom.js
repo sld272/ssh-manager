@@ -51,6 +51,7 @@ const PATHS = {
   system: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/>',
   network: '<circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><circle cx="12" cy="5" r="2"/><circle cx="12" cy="19" r="2"/>',
   copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
+  more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
   trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
   sidebar: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
@@ -98,3 +99,52 @@ export function toast(message) {
   box.replaceChildren(item);
   setTimeout(() => item.remove(), 3200);
 }
+
+// One popup menu at a time, opened under a button or at the pointer for a right click. It closes on a
+// click elsewhere, Escape, scrolling or leaving the window.
+let openMenu = null;
+let closedBy = null;
+export function closeMenu() {
+  openMenu?.remove();
+  openMenu = null;
+}
+export function showMenu(items, at) {
+  // The press on the button that opened the menu already closed it; that click must not reopen it.
+  if (closedBy && closedBy === at) {
+    closedBy = null;
+    return;
+  }
+  closeMenu();
+  const el = h('div', { class: 'menu', role: 'menu' }, items.filter(Boolean).map((item) => (item === '-'
+    ? h('div', { class: 'menu-sep', role: 'separator' })
+    : h('button', {
+      type: 'button', role: 'menuitem', class: `menu-item${item.danger ? ' danger' : ''}`,
+      onclick: () => { closeMenu(); item.run(); },
+    }, item.label))));
+  el.anchor = at instanceof Element ? at : null;
+  document.body.append(el);
+  const box = el.getBoundingClientRect();
+  const [x, y] = el.anchor
+    ? [el.anchor.getBoundingClientRect().right - box.width, el.anchor.getBoundingClientRect().bottom + 4]
+    : at;
+  el.style.left = `${Math.max(8, Math.min(x, window.innerWidth - box.width - 8))}px`;
+  el.style.top = `${Math.max(8, Math.min(y, window.innerHeight - box.height - 8))}px`;
+  openMenu = el;
+}
+document.addEventListener('pointerdown', (e) => {
+  if (!openMenu || openMenu.contains(e.target)) return;
+  closedBy = openMenu.anchor?.contains(e.target) ? openMenu.anchor : null;
+  closeMenu();
+}, true);
+document.addEventListener('keydown', (e) => {
+  if (!openMenu) return;
+  if (e.key === 'Escape') closeMenu();
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    const buttons = [...openMenu.querySelectorAll('.menu-item')];
+    const i = buttons.indexOf(document.activeElement);
+    buttons[(i + (e.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length]?.focus();
+  }
+});
+window.addEventListener('blur', closeMenu);
+document.addEventListener('scroll', closeMenu, true);

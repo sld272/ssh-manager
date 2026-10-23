@@ -1,8 +1,8 @@
-import { activityNav, activityView } from './activity.js';
+import { activityView } from './activity.js';
 import { agentsView } from './agents.js';
 import { api, message } from './api.js';
 import {
-  addHostDialog, confirmDialog, credentialDialog, editHostDialog, projectDialog,
+  addHostDialog, confirmDialog, credentialDialog, editHostDialog,
 } from './dialogs.js';
 import { h, icon, replace, toast } from './dom.js';
 import { emptyHostsView, hostsView } from './hosts.js';
@@ -22,9 +22,12 @@ const state = {
   checkResults: {},
   running: new Map(),
   history: [],
-  activity: { filter: 'all', caller: null },
+  activity: { filter: 'all', caller: null, host: null },
   import: { path: '', preview: null, selected: new Set(), error: null, applying: false },
-  agents: null,
+  mcp: null,
+  mcpBusy: new Set(),
+  // Background reachability per host: { reachable, via_jump, at, failures }.
+  reach: {},
 };
 
 // The last theme is cached so the window does not flash light before settings load.
@@ -67,6 +70,42 @@ async function loadSettings() {
   }
 }
 
+// Every host is probed when the window opens or comes back, then every 5 minutes while it is in front.
+// A host that keeps failing is probed less often, up to every 40 minutes, until it answers again.
+const PROBE_EVERY = 5 * 60 * 1000;
+let probing = false;
+async function probe(force = false) {
+  const hosts = state.overview?.hosts ?? [];
+  if (probing || document.hidden || !hosts.length) return;
+  const now = Date.now();
+  const due = hosts.filter((v) => {
+    const r = state.reach[v.id];
+    return force || !r || now - new Date(r.at).getTime() >= PROBE_EVERY * 2 ** Math.min(r.failures, 3);
+  }).map((v) => v.id);
+  if (!due.length) return;
+  probing = true;
+  try {
+    const at = new Date().toISOString();
+    for (const r of await api.probe(due)) {
+      const before = state.reach[r.host_id];
+      state.reach[r.host_id] = { ...r, at, failures: r.reachable ? 0 : (before?.failures ?? 0) + 1 };
+    }
+  } catch {
+    // The probe only reads the catalog; a failure here leaves the last known states in place.
+  } finally {
+    probing = false;
+  }
+  if (idle()) render();
+}
+setInterval(() => probe(), 60 * 1000);
+document.addEventListener('visibilitychange', () => probe(true));
+window.addEventListener('online', () => probe(true));
+
+async function loadMcp() {
+  state.mcp = await api.mcpClients().catch((e) => ({ error: message(e) }));
+  render();
+}
+
 async function loadHistory() {
   try {
     state.history = await api.history(300);
@@ -81,7 +120,7 @@ const actions = {
     state.view = view;
     render();
     if (view === 'activity') { await loadHistory(); render(); }
-    if (view === 'agents') { state.agents = await api.agents().catch(() => null); render(); }
+    if (view === 'agents') loadMcp();
     if (view === 'settings') { await loadSettings(); render(); }
     if (view === 'import' && !state.import.preview) actions.loadImport();
     if (view === 'hosts') refresh();
@@ -133,17 +172,27 @@ const actions = {
     await actions.check(view);
   },
   credential: (view, purpose) => credentialDialog(view, purpose, refresh),
-  edit: (view) => editHostDialog(view, refresh),
-  project: (view) => projectDialog(view, refresh),
-  add: () => addHostDialog((host) => { state.selected = host.id; state.view = 'hosts'; refresh(); }),
+  edit: (view) => editHostDialog(view, async () => { delete state.reach[view.id]; await refresh(); probe(); }),
+  add: () => addHostDialog(async (host) => { state.selected = host.id; state.view = 'hosts'; await refresh(); probe(); }),
+  copyCommand: (view) => navigator.clipboard.writeText(`ssh-manager connect ${view.name}`)
+    .then(() => toast(t('已复制连接命令'))),
+  async setMcp(client, connected) {
+    state.mcpBusy.add(client.id);
+    render();
+    try {
+      await api.mcpSet(client.id, connected);
+      toast(t(connected ? '已接入 {name}' : '已从 {name} 移除', { name: client.name }));
+    } catch (e) {
+      toast(message(e));
+    } finally {
+      state.mcpBusy.delete(client.id);
+    }
+    loadMcp();
+  },
   async clearIssues(view) {
     const ok = await confirmDialog({ title: t('确认已处理这些配置？'), body: t('确认后可以连接。如果配置仍不完整，连接可能失败。'), confirmLabel: t('确认') });
     if (!ok) return;
     await api.hostClearIssues(view.id).catch((e) => toast(message(e)));
-    refresh();
-  },
-  async removeProject(view, name) {
-    await api.projectRemove(view.id, name).catch((e) => toast(message(e)));
     refresh();
   },
   async remove(view) {
@@ -264,7 +313,6 @@ function nav() {
     navItem('agents', t('Agent 接入'), 'agent'),
     navItem('import', t('导入'), 'import')),
   state.view === 'hosts' && hostFilters(),
-  state.view === 'activity' && activityNav(state, actions),
   h('div', { class: 'nav-group nav-bottom' },
     !(healthy && environmentReady(state.settings)) && h('button', {
       type: 'button', class: 'nav-item warn', title: t('环境需要处理'), onclick: () => actions.navigate('settings'),
@@ -305,15 +353,18 @@ function render() {
 
 // Agents and the CLI change the same catalog; pick up their work while the window is idle.
 function idle() {
-  return !document.querySelector('dialog[open], .app.nav-open') && !(document.activeElement instanceof HTMLInputElement);
+  // A redraw replaces the focused field, which would also close an open dropdown and drop the choice.
+  return !document.querySelector('dialog[open], .app.nav-open, .menu')
+    && !(document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLSelectElement);
 }
 setInterval(async () => {
   if (!idle() || document.hidden) return;
   if (state.view === 'activity') { await loadHistory(); render(); }
   if (state.view === 'hosts') refresh();
 }, 10000);
-window.addEventListener('focus', () => { if (idle()) refresh(); });
+window.addEventListener('focus', () => { if (idle()) refresh(); probe(); });
 
 applyTheme(cachedTheme());
 await loadSettings();
 await refresh();
+probe(true);

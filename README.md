@@ -63,7 +63,7 @@ Add `--json` to any command for structured output. See `ssh-manager --help` for 
 
 ## Desktop app
 
-A Tauri desktop app shares the same catalog as the CLI and MCP server. It shows your hosts, connection paths, trust and login status, project paths and agent notes, plus the operation history. You can also import from `~/.ssh/config`, edit a host's address, user and login method, save passwords, open a host in your terminal (Terminal, Ghostty or iTerm), and see how to connect agents. Settings cover language, appearance and the default terminal.
+A Tauri desktop app shares the same catalog as the CLI and MCP server. It shows your hosts with live reachability (a login-free probe every few minutes while the window is open), connection paths, trust and login status, plus an operation history you can filter by caller and host. You can import from `~/.ssh/config`, edit a host's address, user and login method, save passwords, open a host in your terminal (Terminal, Ghostty or iTerm), and add ssh-manager to Claude Code, Codex or Claude Desktop in one click. Settings cover language, appearance and the default terminal.
 
 ```sh
 scripts/install.sh                      # the app uses the installed credentials helper

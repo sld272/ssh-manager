@@ -68,11 +68,19 @@ export function address(connection) {
   return `${connection.user}@${connection.address}${port}`;
 }
 
+// The system ssh-agent has no socket of its own here; 1Password and Secretive are known by their sockets.
+export function agentName(socket) {
+  if (!socket) return t('系统 ssh-agent');
+  if (socket.includes('com.1password')) return '1Password';
+  if (socket.includes('Secretive')) return 'Secretive';
+  return socket;
+}
+
 export function auth(connection) {
   const a = connection.authentication;
   if (a.kind === 'password') return t(a.credential_ref ? '密码已保存' : '密码');
-  if (a.kind === 'key') return t(connection.identity_agent ? '密钥 · 指定代理' : '密钥');
-  return connection.identity_agent ? t('指定的 ssh-agent') : 'ssh-agent';
+  if (a.kind === 'key' && !connection.identity_agent) return t('密钥');
+  return t('密钥 · {agent}', { agent: agentName(connection.identity_agent) });
 }
 
 const ALGORITHMS = { 'ssh-ed25519': 'ED25519', 'ssh-rsa': 'RSA', 'ecdsa-sha2-nistp256': 'ECDSA', 'ecdsa-sha2-nistp384': 'ECDSA', 'ecdsa-sha2-nistp521': 'ECDSA' };

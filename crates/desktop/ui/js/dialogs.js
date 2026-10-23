@@ -1,6 +1,6 @@
 import { api, message } from './api.js';
 import { h, icon, replace, toast } from './dom.js';
-import { defaultConnection } from './format.js';
+import { agentName, defaultConnection } from './format.js';
 import { t } from './i18n.js';
 
 function open(content) {
@@ -149,13 +149,26 @@ function keyFiles(initial) {
 function hostDialog(view, { title, subtitle, submitLabel, save, done }) {
   const c = view && defaultConnection(view);
   const a = c?.authentication;
-  let auth = a?.kind ?? 'key';
+  let auth = a?.kind === 'password' ? 'password' : 'key';
+  // 'file', 'system' (the system ssh-agent) or an agent's socket path.
+  const agentChoice = (socket) => socket ?? 'system';
+  let source = a?.kind === 'agent' || c?.identity_agent ? agentChoice(c.identity_agent) : 'file';
   const name = h('input', { class: 'input', required: true, autofocus: !view, placeholder: 'blog', value: view?.name });
   const addr = h('input', { class: 'input', required: true, placeholder: t('example.com 或 IP 地址'), value: c?.address });
   const user = h('input', { class: 'input', required: true, placeholder: 'deploy', value: c?.user });
   const port = h('input', { class: 'input', type: 'number', min: 1, max: 65535, required: true, value: c?.port ?? 22 });
   const keys = keyFiles(a?.kind === 'key' ? a.paths : []);
   const keyField = h('div', { class: 'field' }, h('span', null, t('密钥文件')), keys.el);
+  const sourceSelect = h('select', { class: 'select', 'aria-label': t('密钥来源'), onchange: (e) => { source = e.target.value; drawSeg(); } });
+  const drawSources = (agents) => {
+    const options = [['file', t('密钥文件')], ...agents.map((g) => [agentChoice(g.socket), agentName(g.socket)])];
+    // A socket set by an imported config stays selectable even when its agent is not running now.
+    if (source !== 'file' && !options.some(([v]) => v === source)) options.push([source, agentName(source === 'system' ? null : source)]);
+    replace(sourceSelect, options.map(([v, label]) => h('option', { value: v, selected: v === source }, label)));
+  };
+  drawSources([]);
+  api.keyAgents().then(drawSources).catch(() => {});
+  const sourceField = h('div', { class: 'field' }, h('span', null, t('密钥来源')), sourceSelect);
   const saved = a?.kind === 'password' && !!a.credential_ref;
   const password = h('input', {
     class: 'input', type: 'password', autocomplete: 'off',
@@ -164,14 +177,15 @@ function hostDialog(view, { title, subtitle, submitLabel, save, done }) {
   const passwordField = field(t('登录密码'), password);
   const description = h('input', { class: 'input', placeholder: t('这台机器是做什么的'), value: view?.context.description });
   const tags = tagEditor(view?.tags ?? []);
-  const choices = [['key', t('密钥')], ['agent', 'ssh-agent'], ['password', t('密码')]];
+  const choices = [['key', t('密钥')], ['password', t('密码')]];
   const seg = h('div', { class: 'segmented full', role: 'group', 'aria-label': t('登录方式') });
   const drawSeg = () => {
     replace(seg, choices.map(([v, label]) => h('button', {
       type: 'button', 'aria-pressed': String(auth === v),
       onclick: () => { auth = v; drawSeg(); },
     }, label)));
-    keyField.hidden = auth !== 'key';
+    sourceField.hidden = auth !== 'key';
+    keyField.hidden = auth !== 'key' || source !== 'file';
     passwordField.hidden = auth !== 'password';
   };
   drawSeg();
@@ -182,6 +196,7 @@ function hostDialog(view, { title, subtitle, submitLabel, save, done }) {
       h('div', { class: 'field-row' }, field(t('名称'), name), field(t('登录用户'), user)),
       h('div', { class: 'field-row port' }, field(t('地址'), addr), field(t('端口'), port)),
       h('div', { class: 'field' }, h('span', null, t('登录方式')), seg),
+      sourceField,
       keyField,
       passwordField,
       field(t('说明'), description),
@@ -189,7 +204,11 @@ function hostDialog(view, { title, subtitle, submitLabel, save, done }) {
     submit: async () => {
       const host = await save({
         name: name.value, address: addr.value, user: user.value, port: Number(port.value), auth,
-        keyPaths: auth === 'key' ? keys.values() : [],
+        keyPaths: auth !== 'key' ? [] : source === 'file' ? keys.values()
+          // An imported key paired with this same agent keeps choosing which of its keys to offer.
+          : a?.kind === 'key' && agentChoice(c.identity_agent) === source ? a.paths : [],
+        useAgent: auth === 'key' && source !== 'file',
+        identityAgent: source === 'file' || source === 'system' ? null : source,
         description: description.value, tags: tags.values(),
       });
       if (auth === 'password' && password.value) {
@@ -231,24 +250,5 @@ export function editHostDialog(view, onDone) {
       return view.id;
     },
     done: onDone,
-  });
-}
-
-export function projectDialog(view, onDone) {
-  const name = h('input', { class: 'input', required: true, autofocus: true, placeholder: 'blog' });
-  const path = h('input', { class: 'input', required: true, placeholder: '/srv/blog' });
-  const description = h('input', { class: 'input', placeholder: t('例如：Docker Compose 部署') });
-  formDialog({
-    title: t('添加项目'),
-    subtitle: t('记下 {name} 上的项目目录，agent 可以直接在里面工作。', { name: view.name }),
-    iconName: 'folder',
-    fields: h('div', { class: 'stack', style: 'gap: 14px' },
-      h('div', { class: 'field-row' }, field(t('名称'), name), field(t('远端路径'), path)),
-      field(t('说明'), description)),
-    submitLabel: t('添加'),
-    submit: async () => {
-      await api.projectSave(view.id, { name: name.value, path: path.value, description: description.value });
-      onDone();
-    },
   });
 }

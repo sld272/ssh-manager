@@ -7,7 +7,6 @@ use ssh_manager_core::{
     *,
 };
 use std::{
-    collections::HashMap,
     path::PathBuf,
     sync::{Arc, OnceLock, atomic::AtomicBool},
     time::Duration,
@@ -168,17 +167,26 @@ pub struct HostInput {
     address: String,
     user: String,
     port: u16,
-    /// "key", "agent" or "password".
+    /// "key" or "password".
     auth: String,
-    /// Key files for "key"; imported hosts often list several.
+    /// Key files; empty when the keys come from an agent. Imported hosts often list several, and an
+    /// imported 1Password login names the public key that picks one of the agent's keys.
     key_paths: Vec<String>,
+    /// Whether the keys come from an agent rather than from key files.
+    use_agent: bool,
+    /// The agent's socket; None is the system ssh-agent.
+    identity_agent: Option<String>,
     description: String,
     tags: Vec<String>,
 }
 impl HostInput {
     fn authentication(&self) -> Result<Authentication> {
         Ok(match self.auth.as_str() {
-            "key" => Authentication::Key {
+            "password" => Authentication::Password {
+                credential_ref: None,
+            },
+            _ if self.use_agent && self.key_paths.is_empty() => Authentication::Agent,
+            _ => Authentication::Key {
                 paths: self
                     .key_paths
                     .iter()
@@ -186,11 +194,12 @@ impl HostInput {
                     .collect::<Result<_>>()?,
                 passphrase_ref: None,
             },
-            "password" => Authentication::Password {
-                credential_ref: None,
-            },
-            _ => Authentication::Agent,
         })
+    }
+    fn identity_agent(&self) -> Option<String> {
+        self.identity_agent
+            .clone()
+            .filter(|_| self.auth == "key" && self.use_agent)
     }
 }
 
@@ -204,6 +213,7 @@ pub async fn host_add(input: HostInput) -> Result<Host> {
             input.port,
             input.authentication()?,
         );
+        h.connections[0].identity_agent = input.identity_agent();
         h.context.description = input.description.trim().into();
         h.tags = input.tags;
         store()?.save(&h)?;
@@ -230,6 +240,7 @@ pub async fn host_update(host: String, input: HostInput) -> Result<Vec<String>> 
         c.address = input.address.trim().into();
         c.user = input.user.trim().into();
         c.port = input.port;
+        c.identity_agent = input.identity_agent();
         let next = input.authentication()?;
         // The saved password or passphrase stays only while the method and key files stay the same.
         let same = match (&c.authentication, &next) {
@@ -264,48 +275,6 @@ pub async fn host_remove(host: String) -> Result<Vec<String>> {
     blocking(move || {
         let (_, pending) = credentials::remove_host(&store()?, &system_credentials()?, &host)?;
         Ok(pending)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn project_save(
-    host: String,
-    name: String,
-    path: String,
-    description: String,
-) -> Result<Host> {
-    blocking(move || {
-        let store = store()?;
-        let mut h = store.host(&host)?;
-        let project = Project {
-            name: name.trim().into(),
-            path: path.trim().into(),
-            description: description.trim().into(),
-        };
-        match h
-            .context
-            .projects
-            .iter_mut()
-            .find(|p| p.name == project.name)
-        {
-            Some(existing) => *existing = project,
-            None => h.context.projects.push(project),
-        }
-        store.save(&h)?;
-        Ok(h)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn project_remove(host: String, name: String) -> Result<Host> {
-    blocking(move || {
-        let store = store()?;
-        let mut h = store.host(&host)?;
-        h.context.projects.retain(|p| p.name != name);
-        store.save(&h)?;
-        Ok(h)
     })
     .await
 }
@@ -353,48 +322,6 @@ pub async fn import_apply(path: Option<String>, names: Vec<String>) -> Result<us
         error::require(!names.is_empty(), "nothing_selected", "请至少选择一台主机")?;
         let plan = importer::preview(&import_source(path)?, &names)?;
         importer::apply(&store()?, plan)
-    })
-    .await
-}
-
-#[derive(Serialize)]
-pub struct AgentClient {
-    caller: String,
-    operations: usize,
-    last_used: chrono::DateTime<chrono::Utc>,
-}
-#[derive(Serialize)]
-pub struct Agents {
-    clients: Vec<AgentClient>,
-    /// The installed command that MCP clients launch.
-    command: Option<String>,
-}
-
-#[tauri::command]
-pub async fn agents() -> Result<Agents> {
-    blocking(|| {
-        let mut clients: HashMap<String, AgentClient> = HashMap::new();
-        for r in store()?.history(None, 1000)? {
-            if matches!(r.caller.as_str(), "cli" | "desktop" | "library") {
-                continue;
-            }
-            let entry = clients.entry(r.caller.clone()).or_insert(AgentClient {
-                caller: r.caller.clone(),
-                operations: 0,
-                last_used: r.started_at,
-            });
-            entry.operations += 1;
-            entry.last_used = entry.last_used.max(r.started_at);
-        }
-        let mut clients: Vec<_> = clients.into_values().collect();
-        clients.sort_by_key(|c| std::cmp::Reverse(c.last_used));
-        let command = importer::home()?.join(".local/bin/ssh-manager");
-        Ok(Agents {
-            clients,
-            command: command
-                .is_file()
-                .then(|| command.to_string_lossy().into_owned()),
-        })
     })
     .await
 }
@@ -587,6 +514,268 @@ pub async fn pick_key_file(app: tauri::AppHandle) -> Result<Option<String>> {
             .blocking_pick_file()
             .and_then(|f| f.into_path().ok())
             .map(|p| p.to_string_lossy().into_owned()))
+    })
+    .await
+}
+
+#[derive(Serialize)]
+pub struct KeyAgent {
+    /// None is the system ssh-agent.
+    socket: Option<String>,
+    name: &'static str,
+}
+
+/// Agents that hold keys on this Mac: the system ssh-agent, and 1Password or Secretive when their agent is on.
+#[tauri::command]
+pub async fn key_agents() -> Result<Vec<KeyAgent>> {
+    blocking(|| {
+        let home = importer::home()?;
+        let mut agents = vec![];
+        if std::env::var_os("SSH_AUTH_SOCK").is_some_and(|p| std::path::Path::new(&p).exists()) {
+            agents.push(KeyAgent {
+                socket: None,
+                name: "ssh-agent",
+            });
+        }
+        for (name, path) in [
+            (
+                "1Password",
+                "Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock",
+            ),
+            (
+                "Secretive",
+                "Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh",
+            ),
+        ] {
+            let socket = home.join(path);
+            if socket.exists() {
+                agents.push(KeyAgent {
+                    socket: Some(socket.to_string_lossy().into_owned()),
+                    name,
+                });
+            }
+        }
+        Ok(agents)
+    })
+    .await
+}
+
+#[derive(Serialize)]
+pub struct Reach {
+    host_id: uuid::Uuid,
+    reachable: bool,
+    /// A host behind a jump host cannot be reached directly; its first jump host was probed instead.
+    via_jump: bool,
+}
+
+/// Probes the hosts in parallel without logging in to any of them.
+#[tauri::command]
+pub async fn probe(hosts: Vec<String>) -> Result<Vec<Reach>> {
+    blocking(move || {
+        let catalog = store()?.list()?;
+        let connection = |id: uuid::Uuid| {
+            catalog
+                .iter()
+                .flat_map(|h| &h.connections)
+                .find(|c| c.id == id)
+        };
+        let targets: Vec<_> = catalog
+            .iter()
+            .filter(|h| hosts.iter().any(|s| *s == h.id.to_string()))
+            .filter_map(|h| {
+                let c = h.connection(None).ok()?;
+                let first = match c.jumps.first() {
+                    Some(id) => connection(*id)?,
+                    None => c,
+                };
+                Some((h.id, first.address.clone(), first.port, !c.jumps.is_empty()))
+            })
+            .collect();
+        Ok(std::thread::scope(|scope| {
+            let running: Vec<_> = targets
+                .into_iter()
+                .map(|(host_id, address, port, via_jump)| {
+                    scope.spawn(move || Reach {
+                        host_id,
+                        reachable: ssh_manager_core::reach::probe(
+                            &address,
+                            port,
+                            Duration::from_secs(4),
+                        ),
+                        via_jump,
+                    })
+                })
+                .collect();
+            running
+                .into_iter()
+                .map(|r| r.join().expect("a probe does not panic"))
+                .collect()
+        }))
+    })
+    .await
+}
+
+/// MCP clients that ssh-manager can be added to in one step.
+const MCP_CLIENTS: &[(&str, &str)] = &[
+    ("claude-code", "Claude Code"),
+    ("codex", "Codex"),
+    ("claude-desktop", "Claude Desktop"),
+];
+const MCP_NAME: &str = "ssh-manager";
+
+/// The client's own command-line tool; GUI apps do not inherit the shell's PATH.
+fn client_cli(name: &str) -> Result<Option<PathBuf>> {
+    let home = importer::home()?;
+    let places = [
+        home.join(".local/bin"),
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/usr/local/bin"),
+    ];
+    Ok(places.iter().map(|p| p.join(name)).find(|p| p.is_file()))
+}
+fn claude_desktop_config() -> Result<PathBuf> {
+    Ok(importer::home()?.join("Library/Application Support/Claude/claude_desktop_config.json"))
+}
+fn read_json(path: &std::path::Path) -> Result<serde_json::Value> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(serde_json::from_str(&text)?),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(serde_json::json!({})),
+        Err(e) => Err(e.into()),
+    }
+}
+/// Whether the client is installed, and whether ssh-manager is already one of its MCP servers.
+fn client_state(id: &str) -> Result<(bool, bool)> {
+    Ok(match id {
+        "claude-code" => {
+            let installed = client_cli("claude")?.is_some();
+            // User-scope servers live in ~/.claude.json; reading it avoids starting every server as `claude mcp get` does.
+            let config = read_json(&importer::home()?.join(".claude.json"))?;
+            (installed, config["mcpServers"].get(MCP_NAME).is_some())
+        }
+        "codex" => match client_cli("codex")? {
+            Some(cli) => {
+                let status = std::process::Command::new(cli)
+                    .args(["mcp", "get", MCP_NAME])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status()?;
+                (true, status.success())
+            }
+            None => (false, false),
+        },
+        _ => {
+            let installed = std::path::Path::new("/Applications/Claude.app").exists();
+            let config = read_json(&claude_desktop_config()?)?;
+            (installed, config["mcpServers"].get(MCP_NAME).is_some())
+        }
+    })
+}
+
+#[derive(Serialize)]
+pub struct McpClient {
+    id: &'static str,
+    name: &'static str,
+    connected: bool,
+}
+#[derive(Serialize)]
+pub struct McpClients {
+    clients: Vec<McpClient>,
+    /// The installed command that MCP clients launch.
+    command: Option<String>,
+}
+
+/// The MCP clients installed on this Mac.
+#[tauri::command]
+pub async fn mcp_clients() -> Result<McpClients> {
+    blocking(|| {
+        let mut clients = vec![];
+        for (id, name) in MCP_CLIENTS {
+            let (installed, connected) = client_state(id)?;
+            if installed {
+                clients.push(McpClient {
+                    id,
+                    name,
+                    connected,
+                });
+            }
+        }
+        Ok(McpClients {
+            clients,
+            command: installed_command()?.map(|p| p.to_string_lossy().into_owned()),
+        })
+    })
+    .await
+}
+
+fn run_client(cli: Option<PathBuf>, args: &[&str]) -> Result<()> {
+    let cli = cli.ok_or_else(|| Error::new("client_unavailable", "未找到这个客户端"))?;
+    let out = std::process::Command::new(cli).args(args).output()?;
+    error::require(
+        out.status.success(),
+        "client_failed",
+        String::from_utf8_lossy(&out.stderr).trim(),
+    )
+}
+
+/// Adds ssh-manager to the client's MCP servers, or removes it again.
+#[tauri::command]
+pub async fn mcp_set(client: String, connected: bool) -> Result<()> {
+    blocking(move || {
+        let command = installed_command()?.ok_or_else(|| {
+            Error::new(
+                "command_unavailable",
+                "未找到 ssh-manager 命令行工具，请先安装",
+            )
+        })?;
+        let command = command.to_string_lossy().into_owned();
+        match (client.as_str(), connected) {
+            ("claude-code", true) => run_client(
+                client_cli("claude")?,
+                &[
+                    "mcp", "add", "--scope", "user", MCP_NAME, "--", &command, "mcp",
+                ],
+            ),
+            ("claude-code", false) => run_client(
+                client_cli("claude")?,
+                &["mcp", "remove", "--scope", "user", MCP_NAME],
+            ),
+            ("codex", true) => run_client(
+                client_cli("codex")?,
+                &["mcp", "add", MCP_NAME, "--", &command, "mcp"],
+            ),
+            ("codex", false) => run_client(client_cli("codex")?, &["mcp", "remove", MCP_NAME]),
+            ("claude-desktop", _) => {
+                let path = claude_desktop_config()?;
+                let mut config = read_json(&path)?;
+                let servers = config
+                    .as_object_mut()
+                    .ok_or_else(|| {
+                        Error::new("client_config_invalid", "Claude 的配置文件格式不对")
+                    })?
+                    .entry("mcpServers")
+                    .or_insert_with(|| serde_json::json!({}));
+                let servers = servers.as_object_mut().ok_or_else(|| {
+                    Error::new("client_config_invalid", "Claude 的配置文件格式不对")
+                })?;
+                if connected {
+                    servers.insert(
+                        MCP_NAME.into(),
+                        serde_json::json!({ "command": command, "args": ["mcp"] }),
+                    );
+                } else {
+                    servers.remove(MCP_NAME);
+                }
+                // Claude may read the file at any moment; replace it whole rather than rewrite it in place.
+                let dir = path.parent().expect("the config lives in Claude's folder");
+                std::fs::create_dir_all(dir)?;
+                let mut temp = tempfile::NamedTempFile::new_in(dir)?;
+                use std::io::Write;
+                temp.write_all(serde_json::to_string_pretty(&config)?.as_bytes())?;
+                temp.persist(&path).map_err(|e| Error::from(e.error))?;
+                Ok(())
+            }
+            _ => Err(Error::new("client_unavailable", "未找到这个客户端")),
+        }
     })
     .await
 }

@@ -10,17 +10,22 @@ const FILTERS = [
 
 export function activityView(state, actions) {
   const [, , test] = FILTERS.find(([key]) => key === state.activity.filter);
-  const records = state.history.filter((r) => test(r) && (!state.activity.caller || r.caller === state.activity.caller));
+  const { caller: who, host } = state.activity;
+  const records = state.history.filter((r) => test(r) && (!who || r.caller === who) && (!host || r.host_id === host));
   const dayAgo = Date.now() - 86400000;
   const unknown = state.history.find((r) => r.status === 'result_unknown' && r.kind !== 'check' && new Date(r.started_at).getTime() > dayAgo);
 
   return screen({
     title: t('活动'),
-    tools: h('div', { class: 'segmented', role: 'group', 'aria-label': t('筛选') },
-      FILTERS.map(([key, label]) => h('button', {
-        type: 'button', 'aria-pressed': String(state.activity.filter === key),
-        onclick: () => { state.activity.filter = key; actions.render(); },
-      }, t(label)))),
+    tools: [
+      picker(t('调用方'), t('全部调用方'), callers(state.history), who, (v) => { state.activity.caller = v; actions.render(); }),
+      picker(t('主机'), t('全部主机'), hosts(state.history), host, (v) => { state.activity.host = v; actions.render(); }),
+      h('div', { class: 'segmented', role: 'group', 'aria-label': t('筛选') },
+        FILTERS.map(([key, label]) => h('button', {
+          type: 'button', 'aria-pressed': String(state.activity.filter === key),
+          onclick: () => { state.activity.filter = key; actions.render(); },
+        }, t(label)))),
+    ],
     body: h('div', { class: 'main-body' }, h('div', { class: 'page' },
       h('p', { class: 'lead small' }, t('你和 agent 在各台主机上做过的操作。只记录目标、时间、调用方和目的，不保存命令内容和输出。')),
 
@@ -51,14 +56,17 @@ export function activityView(state, actions) {
   });
 }
 
-export function activityNav(state, actions) {
-  const callers = new Map();
-  for (const r of state.history) callers.set(r.caller, (callers.get(r.caller) ?? 0) + 1);
-  if (!callers.size) return null;
-  return h('div', { class: 'nav-group nav-filters' },
-    h('div', { class: 'nav-label' }, t('调用方')),
-    [...callers].map(([name, count]) => h('button', {
-      type: 'button', class: 'nav-item', 'aria-pressed': String(state.activity.caller === name),
-      onclick: () => { state.activity.caller = state.activity.caller === name ? null : name; actions.render(); },
-    }, h('span', { class: 'grow ellipsis' }, caller(name)), h('span', { class: 'nav-count' }, count))));
+// Options from the records themselves, so a removed host or a client used once still shows up.
+function callers(history) {
+  return [...new Set(history.map((r) => r.caller))].map((c) => [c, caller(c)]);
+}
+function hosts(history) {
+  const names = new Map();
+  for (const r of history) if (!names.has(r.host_id)) names.set(r.host_id, r.host_name);
+  return [...names].sort((a, b) => a[1].localeCompare(b[1]));
+}
+function picker(label, all, options, value, onPick) {
+  return h('select', { class: 'select', 'aria-label': label, onchange: (e) => { e.target.blur(); onPick(e.target.value || null); } },
+    h('option', { value: '' }, all),
+    options.map(([key, text]) => h('option', { value: key, selected: key === value }, text)));
 }

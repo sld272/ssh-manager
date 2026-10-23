@@ -63,7 +63,7 @@ ssh-manager exec web --project blog -- 'docker compose ps'
 
 ## 桌面端
 
-基于 Tauri 的桌面应用，与 CLI、MCP 共用同一个主机库。可以查看主机、连接路径、信任与登录状态、项目路径和 agent 记录，以及操作记录；也可以从 `~/.ssh/config` 导入、修改主机地址、用户和登录方式、保存密码、在终端中打开主机（终端、Ghostty 或 iTerm），并查看接入 agent 的方式。设置中可以切换语言、外观和默认终端。
+基于 Tauri 的桌面应用，与 CLI、MCP 共用同一个主机库。可以查看主机的实时在线状态（窗口打开时每隔几分钟做一次不登录的探测）、连接路径、信任与登录状态，以及可按调用方和主机筛选的操作记录；也可以从 `~/.ssh/config` 导入、修改主机地址、用户和登录方式、保存密码、在终端中打开主机（终端、Ghostty 或 iTerm），并一键把 ssh-manager 接入 Claude Code、Codex 或 Claude Desktop。设置中可以切换语言、外观和默认终端。
 
 ```sh
 scripts/install.sh                      # 桌面端使用已安装的凭据组件
