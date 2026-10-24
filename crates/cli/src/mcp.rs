@@ -97,7 +97,7 @@ fn tools() -> Vec<Value> {
         ),
         tool_definition(
             "exec",
-            "执行远端命令。结果未知时先核实实际状态；不要自动重试有副作用的操作",
+            "执行远端命令并等待结束。可能超过 timeout 的命令改用 job_start。结果未知时先核实实际状态；不要自动重试有副作用的操作",
             remote,
             vec!["host", "command"],
             false,

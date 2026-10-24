@@ -17,6 +17,10 @@ description: 使用本机 ssh-manager 管理已配置的 SSH 服务器，读取�
 
 可能超过一次等待时间的命令（打包、备份、迁移、大量下载）用后台任务：`job start NAME --json -- '命令'` 立即返回 `job.id`；`job status NAME ID --json --wait 30` 等待并读取最新输出，`job.state` 是 running、exited、cancelled 或 lost，`job.exit_code` 是任务的退出码，结果里的 `status` 只表示这次查询是否成功。需要按顺序读完整输出时，把上次的 `job.next_offset` 作为 `--offset` 传入。`job cancel NAME ID` 只终止这个任务自己的进程，等待最多 10 秒，仍未结束时再执行一次会强制结束。MCP 对应 `job_start`、`job_status`、`job_cancel`。
 
+修改服务或配置时，先记录修改前的状态（服务状态、监听端口、关键配置的校验值），修改后按用户指定的检查验收；有回滚方案时先确认回滚命令，再动手。同一台主机上的修改和验收按顺序执行，不要并发。
+
+读取可能含密码、令牌或私钥的配置（环境变量、节点或订阅配置）时，在远端只输出需要的字段，例如用 `jq` 或 `grep` 过滤；输出里的已绑定 SSH 凭据会被替换，但不能指望识别其他应用的秘密。
+
 复盘或核实中断的操作时，用 `history --host NAME --status result_unknown --since 时间` 查记录（MCP 为 `history`）；记录不含命令和输出。
 
 探索后可用 `context note NAME '记录'` 追加发现，不覆盖用户说明。探测事实要说明观察时间；不要保存密码、令牌或私钥。

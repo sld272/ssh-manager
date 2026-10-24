@@ -422,7 +422,15 @@ impl OpenSsh<'_> {
         } else if phase == ExecutionPhase::Started || raw.termination.is_some() || io_failed {
             (
                 Status::ResultUnknown,
-                Some("远端操作可能仍在运行，请先检查实际结果，再决定后续操作".into()),
+                Some(
+                    match raw.termination.as_deref() {
+                        Some("timeout") if kind == "exec" => "已停止等待，远端命令可能仍在运行。请先检查实际结果，再决定后续操作；耗时较长的命令可改用后台任务",
+                        Some("timeout") => "已停止等待，远端操作可能仍在进行。请先检查实际结果，再决定后续操作",
+                        Some(_) => "已取消等待，远端命令可能仍在运行。请先检查实际结果，再决定后续操作",
+                        None => "连接中断，远端命令可能仍在运行。请先检查实际结果，再决定后续操作",
+                    }
+                    .into(),
+                ),
             )
         } else if stderr.contains("Host key verification failed") {
             // Only a saved login refuses a key: either it changed, or the server now offers a type that was never recorded.

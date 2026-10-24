@@ -181,7 +181,7 @@ report tail 0
         let id = job_id(id)?;
         // A wait that fills the timeout would turn every slow job into an unknown result.
         error::require(
-            wait + 10 <= options.timeout.as_secs(),
+            wait == 0 || wait + 10 <= options.timeout.as_secs(),
             "invalid_arguments",
             "等待时间至少要比超时短 10 秒",
         )?;
