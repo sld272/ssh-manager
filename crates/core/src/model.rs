@@ -279,6 +279,9 @@ pub struct TransferReceipt {
     pub destination: String,
     pub direction: String,
     pub mode: String,
+    /// For a single uploaded file: its size, and the SHA-256 the server confirmed before replacing the target.
+    pub bytes: Option<u64>,
+    pub sha256: Option<String>,
 }
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

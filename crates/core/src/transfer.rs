@@ -91,52 +91,31 @@ impl OpenSsh<'_> {
             "symlink_not_supported",
             "请选择普通文件或目录",
         )?;
-        let mut lines = vec![];
-        match mode {
-            TransferMode::File => {
-                error::require(
-                    metadata.is_file() && !destination.ends_with('/'),
-                    "invalid_transfer_target",
-                    "文件模式需要普通源文件和完整目标文件名",
-                )?;
-                lines.push(format!(
-                    "put {} {}",
-                    sftp_quote(&source.to_string_lossy()),
-                    sftp_quote(destination)
-                ));
-            }
-            TransferMode::Contents => {
-                error::require(
-                    metadata.is_dir(),
-                    "invalid_transfer_source",
-                    "内容模式需要源目录",
-                )?;
-                lines.push(format!("mkdir {}", sftp_quote(destination)));
-                upload_tree(&source, destination, &mut lines)?;
-            }
+        if let TransferMode::File = mode {
+            error::require(
+                metadata.is_file() && !destination.ends_with('/'),
+                "invalid_transfer_target",
+                "文件模式需要普通源文件和完整目标文件名",
+            )?;
+            return self.upload_file(host, connection, &source, &metadata, destination, options);
         }
-        // Check target type before SFTP: put to an existing directory would silently append the source basename.
-        let target_type = match mode {
-            TransferMode::File => format!(
-                "test ! -d {} && test ! -L {}",
-                ssh::shell_quote(destination),
-                ssh::shell_quote(destination)
-            ),
-            TransferMode::Contents => format!(
-                "test -d {} && test ! -L {}",
-                ssh::shell_quote(destination),
-                ssh::shell_quote(destination)
-            ),
-        };
+        error::require(
+            metadata.is_dir(),
+            "invalid_transfer_source",
+            "内容模式需要源目录",
+        )?;
+        let mut lines = vec![format!("mkdir {}", sftp_quote(destination))];
+        upload_tree(&source, destination, &mut lines)?;
+        let target_type = format!(
+            "test -d {} && test ! -L {}",
+            ssh::shell_quote(destination),
+            ssh::shell_quote(destination)
+        );
         let preflight = self.exec(host, connection, &target_type, None, None, options)?;
-        if matches!(mode, TransferMode::Contents) {
-            // Destination exists: merge entries into this directory instead of creating another basename level.
-            if preflight.successful() {
-                lines.remove(0);
-            } else if preflight.status != Status::CommandFailed {
-                return Ok(preflight);
-            }
-        } else if !preflight.successful() {
+        // Destination exists: merge entries into this directory instead of creating another basename level.
+        if preflight.successful() {
+            lines.remove(0);
+        } else if preflight.status != Status::CommandFailed {
             return Ok(preflight);
         }
         self.transfer(
@@ -147,13 +126,107 @@ impl OpenSsh<'_> {
                 source: source.to_string_lossy().into(),
                 destination: destination.into(),
                 direction: "upload".into(),
-                mode: match mode {
-                    TransferMode::File => "file",
-                    TransferMode::Contents => "contents",
-                }
-                .into(),
+                mode: "contents".into(),
+                bytes: None,
+                sha256: None,
             },
             options,
+        )
+    }
+    /// Streams the file over one connection into a hidden sibling of the target, which replaces the target only
+    /// once its SHA-256 matches, with the old file's mode and owner. An interrupted upload leaves the target as it was.
+    fn upload_file(
+        &self,
+        host: &str,
+        connection: Option<&str>,
+        source: &Path,
+        metadata: &std::fs::Metadata,
+        destination: &str,
+        options: &ExecutionOptions,
+    ) -> Result<OperationResult> {
+        use sha2::{Digest, Sha256};
+        use std::{
+            io::{Seek, SeekFrom},
+            os::unix::fs::PermissionsExt,
+        };
+        let mut file = std::fs::File::open(source)?;
+        let mut hasher = Sha256::new();
+        let bytes = std::io::copy(&mut file, &mut hasher)?;
+        let sha256: String = hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        file.seek(SeekFrom::Start(0))?;
+        // Exit 3: the target is unusable, 4: the target was left untouched, 5: writing it in place failed partway.
+        let script = format!(
+            r#"dest={dest}
+# After a dropped connection the messages below have nowhere to go; carry on so the temporary file is removed.
+trap '' PIPE
+if [ -d "$dest" ] || [ -L "$dest" ]; then echo "目标是目录或符号链接，请提供完整的文件名" >&2; exit 3; fi
+dir=${{dest%/*}}
+tmp="$dir/.${{dest##*/}}.ssh-manager-{token}"
+verify() {{ [ "$(sha256sum "$1" | cut -d' ' -f1)" = {sha256} ] || {{ echo "上传后的内容与本机文件不一致" >&2; return 1; }}; }}
+if ! (umask 077 && : > "$tmp") 2>/dev/null; then
+  # A directory this account cannot add files to may still hold a file it can overwrite.
+  [ -f "$dest" ] && [ -w "$dest" ] || {{ echo "没有在目标位置写入文件的权限" >&2; exit 4; }}
+  cat > "$dest" && verify "$dest" || exit 5
+  exit 0
+fi
+cat > "$tmp" && verify "$tmp" || {{ rm -f "$tmp"; exit 4; }}
+if [ -e "$dest" ]; then
+  chmod --reference="$dest" "$tmp" || {{ rm -f "$tmp"; exit 4; }}
+  # A file owned by another account keeps its owner only when written in place.
+  if [ "$(stat -c %u:%g "$dest")" != "$(stat -c %u:%g "$tmp")" ] && ! chown --reference="$dest" "$tmp" 2>/dev/null; then
+    cat "$tmp" > "$dest" && verify "$dest"; code=$?
+    rm -f "$tmp"
+    [ $code -eq 0 ] || exit 5
+    exit 0
+  fi
+else
+  chmod "$(printf %o $((0{mode:o} & ~0$(umask))))" "$tmp" || {{ rm -f "$tmp"; exit 4; }}
+fi
+mv -f "$tmp" "$dest" || {{ rm -f "$tmp"; exit 4; }}
+"#,
+            dest = ssh::shell_quote(destination),
+            token = Uuid::new_v4().simple(),
+            mode = metadata.permissions().mode() & 0o777,
+        );
+        let receipt = TransferReceipt {
+            source: source.to_string_lossy().into(),
+            destination: destination.into(),
+            direction: "upload".into(),
+            mode: "file".into(),
+            bytes: Some(bytes),
+            sha256: Some(sha256),
+        };
+        self.exec_kind(
+            host,
+            connection,
+            &script,
+            None,
+            Some(process::Input::File(file)),
+            options,
+            "upload",
+            |r, _, _| {
+                if r.status == Status::CommandFailed {
+                    r.status = Status::TransferFailed;
+                    r.next_step = Some(
+                        if r.exit_code == Some(5) {
+                            "目标文件可能只写入了一部分，请检查后再继续"
+                        } else {
+                            "目标文件没有改动"
+                        }
+                        .into(),
+                    );
+                }
+                let mut receipt = receipt;
+                if !r.successful() {
+                    receipt.sha256 = None;
+                }
+                r.transfer = Some(receipt);
+                Ok(())
+            },
         )
     }
     pub fn download(
@@ -206,6 +279,8 @@ impl OpenSsh<'_> {
                 destination: destination.to_string_lossy().into(),
                 direction: "download".into(),
                 mode: "file".into(),
+                bytes: None,
+                sha256: None,
             },
             options,
         )?;
@@ -249,7 +324,7 @@ impl OpenSsh<'_> {
         )?;
         let raw = process::run(
             cmd,
-            Some(
+            Some(process::Input::Bytes(
                 format!(
                     "{}\n",
                     lines
@@ -263,10 +338,11 @@ impl OpenSsh<'_> {
                         .join("\n")
                 )
                 .into_bytes(),
-            ),
+            )),
             options.timeout,
             options.cancel.clone(),
-            options.output_limit,
+            options.output_limit - options.output_limit / 2,
+            options.output_limit / 2,
             None,
         )?;
         let code = raw.code;

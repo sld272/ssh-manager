@@ -195,7 +195,8 @@ fn output_capture_drains_after_limit_and_detects_completion() {
         None,
         Duration::from_secs(2),
         Arc::new(AtomicBool::new(false)),
-        32,
+        16,
+        16,
         Some("test".into()),
     )
     .unwrap();
@@ -214,7 +215,8 @@ fn output_capture_keeps_the_end_of_a_long_stream() {
             None,
             Duration::from_secs(2),
             Arc::new(AtomicBool::new(false)),
-            32,
+            16,
+            16,
             None,
         )
         .unwrap()
@@ -235,10 +237,11 @@ fn exec_stdin_reaches_the_command() {
     cmd.args(["-c", "cat"]);
     let result = process::run(
         cmd,
-        Some(b"print('it''s \"quoted\"')".to_vec()),
+        Some(process::Input::Bytes(b"print('it''s \"quoted\"')".to_vec())),
         Duration::from_secs(2),
         Arc::new(AtomicBool::new(false)),
         1024,
+        0,
         None,
     )
     .unwrap();
@@ -312,6 +315,7 @@ fn timeouts_kill_local_descendants_and_release_pipes() {
         Duration::from_millis(100),
         Arc::new(AtomicBool::new(false)),
         32,
+        0,
         None,
     )
     .unwrap();

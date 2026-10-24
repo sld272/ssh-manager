@@ -15,7 +15,7 @@ use zeroize::Zeroize;
 
 #[derive(Debug)]
 pub struct Capture {
-    /// The first half of the kept bytes; `tail` keeps the last half, so a long stream still shows how it ended.
+    /// The first bytes of the stream; `tail` keeps the last ones after them, so a long stream still shows how it ended.
     pub bytes: Vec<u8>,
     pub tail: VecDeque<u8>,
     pub total: u64,
@@ -40,13 +40,20 @@ pub struct ProcessResult {
     pub stderr: Capture,
     pub termination: Option<String>,
 }
+/// What a process reads on stdin.
+pub enum Input {
+    /// Zeroized once written, since it can be a secret for the credential helper.
+    Bytes(Vec<u8>),
+    /// Streamed, so a large upload is never held in memory.
+    File(std::fs::File),
+}
 fn capture(
     mut stream: impl Read,
-    limit: usize,
+    head: usize,
+    tail: usize,
     token: Option<String>,
     spawned: Instant,
 ) -> Capture {
-    let head = limit - limit / 2;
     let mut out = Capture {
         bytes: Vec::new(),
         tail: VecDeque::new(),
@@ -65,8 +72,8 @@ fn capture(
                 let kept = n.min(head.saturating_sub(out.bytes.len()));
                 out.bytes.extend_from_slice(&buf[..kept]);
                 out.tail.extend(&buf[kept..n]);
-                if out.tail.len() > limit / 2 {
-                    out.tail.drain(..out.tail.len() - limit / 2);
+                if out.tail.len() > tail {
+                    out.tail.drain(..out.tail.len() - tail);
                 }
                 if let Some(t) = &token {
                     window.extend_from_slice(&buf[..n]);
@@ -93,12 +100,14 @@ fn capture(
     }
     out
 }
+/// Keeps the first `head` bytes of each stream, and the last `tail` bytes after those.
 pub fn run(
     mut command: Command,
-    input: Option<Vec<u8>>,
+    input: Option<Input>,
     timeout: Duration,
     cancel: Arc<AtomicBool>,
-    limit: usize,
+    head: usize,
+    tail: usize,
     token: Option<String>,
 ) -> Result<ProcessResult> {
     command
@@ -115,17 +124,22 @@ pub fn run(
         .map_err(|e| Error::new("process_start_failed", format!("无法启动 SSH 工具：{e}")))?;
     let pid = child.id();
     let start = Instant::now();
-    let writer = input.map(|mut data| {
+    let writer = input.map(|input| {
         let mut stdin = child.stdin.take().expect("piped stdin");
-        thread::spawn(move || {
-            let _ = stdin.write_all(&data);
-            data.zeroize();
+        thread::spawn(move || match input {
+            Input::Bytes(mut data) => {
+                let _ = stdin.write_all(&data);
+                data.zeroize();
+            }
+            Input::File(mut file) => {
+                let _ = std::io::copy(&mut file, &mut stdin);
+            }
         })
     });
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
-    let out = thread::spawn(move || capture(stdout, limit, None, start));
-    let err = thread::spawn(move || capture(stderr, limit, token, start));
+    let out = thread::spawn(move || capture(stdout, head, tail, None, start));
+    let err = thread::spawn(move || capture(stderr, head, tail, token, start));
     let mut termination = None;
     let status = loop {
         if let Some(status) = child.try_wait()? {

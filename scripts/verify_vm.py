@@ -105,7 +105,8 @@ with tempfile.TemporaryDirectory(prefix='sshm-verify-') as directory:
         payload = local / "input ' [test] $ file.bin"
         payload.write_bytes(os.urandom(262144))
         remote_file = remote + "/payload ' [test] $ file.bin"
-        success(call('upload', host, str(payload), remote_file))
+        r = success(call('upload', host, str(payload), remote_file))
+        expect('upload_receipt_verified', r['transfer']['sha256'] == digest(payload) and r['transfer']['bytes'] == 262144, r)
         downloaded = local / "download ' [test].bin"
         success(call('download', host, remote_file, str(downloaded)))
         expect('binary_round_trip_sha256', digest(payload) == digest(downloaded))

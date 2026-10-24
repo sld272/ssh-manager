@@ -57,10 +57,11 @@ impl SystemCredentials {
             .env("SSH_MANAGER_CREDENTIAL_ACTION", action);
         let mut output = crate::process::run(
             command,
-            input,
+            input.map(crate::process::Input::Bytes),
             Duration::from_secs(5),
             Arc::new(AtomicBool::new(false)),
             65536,
+            0,
             None,
         )?;
         // A locked keychain or an executable whose access was revoked must fail within five seconds, without opening a dialog.

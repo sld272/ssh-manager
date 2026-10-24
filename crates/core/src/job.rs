@@ -161,7 +161,7 @@ report tail 0
             connection,
             &script(&id, &token, &body),
             None,
-            stdin,
+            stdin.map(process::Input::Bytes),
             options,
             "job_start",
             |r, out, broker| read_report(r, out, |s| broker.redact(s), &id, &token),

@@ -365,6 +365,7 @@ pub fn preview(source: &Path, selected: &[String]) -> Result<ImportPlan> {
             Duration::from_secs(10),
             Arc::new(AtomicBool::new(false)),
             262144,
+            0,
             None,
         )?;
         error::require(

@@ -261,7 +261,7 @@ impl OpenSsh<'_> {
             connection,
             command,
             cwd,
-            stdin,
+            stdin.map(process::Input::Bytes),
             options,
             "exec",
             |_, _, _| Ok(()),
@@ -275,7 +275,7 @@ impl OpenSsh<'_> {
         connection: Option<&str>,
         command: &str,
         cwd: Option<&str>,
-        stdin: Option<Vec<u8>>,
+        stdin: Option<process::Input>,
         options: &ExecutionOptions,
         kind: &str,
         finish: impl FnOnce(&mut OperationResult, Option<Vec<u8>>, &Broker) -> Result<()>,
@@ -329,7 +329,9 @@ impl OpenSsh<'_> {
             stdin,
             options.timeout,
             options.cancel.clone(),
-            options.output_limit + 256,
+            // Room for the start and exit records around the output.
+            (options.output_limit + 256) - (options.output_limit + 256) / 2,
+            (options.output_limit + 256) / 2,
             Some(token.clone()),
         )?;
         let stdout = raw.stdout.whole();

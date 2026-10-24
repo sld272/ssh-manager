@@ -61,6 +61,7 @@ pub fn scan(store: &Store, host: &str, connection: Option<&str>) -> Result<Vec<H
         Duration::from_secs(12),
         Arc::new(AtomicBool::new(false)),
         131072,
+        0,
         None,
     )?;
     let keys = parse_keys(&String::from_utf8_lossy(&r.stdout.bytes))?;
@@ -84,6 +85,7 @@ fn find(name: &str, files: &[std::path::PathBuf]) -> Result<Vec<HostKey>> {
             Duration::from_secs(5),
             Arc::new(AtomicBool::new(false)),
             131072,
+            0,
             None,
         )?;
         text.push_str(&String::from_utf8_lossy(&r.stdout.bytes));
