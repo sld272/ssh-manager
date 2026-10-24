@@ -303,6 +303,22 @@ fn history_filters_by_status_and_time() {
         .unwrap();
     assert_eq!(recent.len(), 2);
     assert_eq!(store.history(None, None, None, 10).unwrap().len(), 3);
+    // A record from a newer release with a status this one does not know is skipped, not fatal.
+    let db = rusqlite::Connection::open(dir.path().join("catalog.sqlite3")).unwrap();
+    let mut newer = serde_json::to_value(&recent[0]).unwrap();
+    newer["operation_id"] = serde_json::json!(uuid::Uuid::new_v4());
+    newer["status"] = serde_json::json!("some_future_status");
+    db.execute(
+        "INSERT INTO operations VALUES(?1,?2,?3,?4)",
+        rusqlite::params![
+            newer["operation_id"].as_str().unwrap(),
+            h.id.to_string(),
+            now.to_rfc3339(),
+            newer.to_string()
+        ],
+    )
+    .unwrap();
+    assert_eq!(store.history(None, None, None, 10).unwrap().len(), 3);
 }
 #[test]
 fn timeouts_kill_local_descendants_and_release_pipes() {

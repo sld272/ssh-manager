@@ -211,7 +211,15 @@ impl Store {
             ],
             |r| r.get::<_, String>(0),
         )?;
-        rows.map(|r| Ok(serde_json::from_str(&r?)?)).collect()
+        let mut records = vec![];
+        for row in rows {
+            // A newer CLI shares this catalog with an older desktop app and can record a status it does not know
+            // yet; leave that record out instead of failing the whole history.
+            if let Ok(record) = serde_json::from_str(&row?) {
+                records.push(record);
+            }
+        }
+        Ok(records)
     }
     pub fn export(&self) -> Result<CatalogExport> {
         let mut hosts = self.list()?;
