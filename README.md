@@ -87,7 +87,7 @@ Add it the way you support, for the current user rather than one project: your o
 Once it is added, call host_list to confirm you can see my hosts. How to use it: https://github.com/sld272/ssh-manager/blob/main/skills/ssh-manager/SKILL.md
 ```
 
-Tools: `host_list`, `host_show`, `check`, `exec`, `upload`, `download` and `context_note`. Managing credentials and host trust stays in the CLI.
+Tools: `host_list`, `host_show`, `check`, `exec`, `upload`, `download`, `history` and `context_note`. Managing credentials and host trust stays in the CLI.
 
 [`skills/ssh-manager/SKILL.md`](skills/ssh-manager/SKILL.md) is a skill that teaches agents the workflow: find the host, read its context, run the command, and interpret the result.
 
@@ -96,7 +96,7 @@ Tools: `host_list`, `host_show`, `check`, `exec`, `upload`, `download` and `cont
 - `exec` runs any shell command with the permissions of that SSH account. For a real read-only boundary, use a restricted server account.
 - `result_unknown` means the connection dropped, timed out or was cancelled. The remote command may still be running, so check before retrying anything with side effects.
 - MFA, keyboard-interactive and sudo passwords are never filled in automatically.
-- Operation history records the target, time and status, but not command text or output.
+- Operation history records the target, time, status and how long connecting took, but not command text, input or output.
 
 ## Use as a library
 

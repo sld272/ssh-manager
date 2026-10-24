@@ -19,6 +19,7 @@ struct ToolArgs {
     tag: Option<String>,
     connection: Option<String>,
     command: Option<String>,
+    stdin: Option<String>,
     cwd: Option<String>,
     project: Option<String>,
     source: Option<String>,
@@ -28,6 +29,9 @@ struct ToolArgs {
     output_limit: Option<usize>,
     reason: Option<String>,
     text: Option<String>,
+    status: Option<Status>,
+    since: Option<chrono::DateTime<chrono::Utc>>,
+    limit: Option<u32>,
 }
 fn required(value: Option<String>, field: &str) -> Result<String> {
     value.ok_or_else(|| Error::new("invalid_arguments", format!("缺少参数：{field}")))
@@ -45,6 +49,7 @@ fn tools() -> Vec<Value> {
     let mut remote = json!({"host":{"type":"string"},"connection":{"type":"string"},"timeout":{"type":"integer","minimum":1,"maximum":86400,"default":60},"output_limit":{"type":"integer","minimum":256,"maximum":16777216,"default":65536},"reason":{"type":"string"}});
     let check = remote.clone();
     remote["command"] = json!({"type":"string","description":"完整 POSIX Shell 命令"});
+    remote["stdin"] = json!({"type":"string","description":"传给命令标准输入的文本；脚本可配合 python3 - 或 sh -s 使用，免去多层引号"});
     remote["cwd"] = json!({"type":"string"});
     remote["project"] = json!({"type":"string"});
     let mut transfer = check.clone();
@@ -96,6 +101,13 @@ fn tools() -> Vec<Value> {
             false,
         ),
         tool_definition(
+            "history",
+            "查询操作记录，按时间倒序；记录包含目标、时间、结果和耗时，不含命令和输出",
+            json!({"host":{"type":"string"},"status":{"type":"string","enum":["succeeded","command_failed","connection_failed","authentication_failed","host_key_required","host_key_changed","needs_interaction","result_unknown","transfer_failed"]},"since":{"type":"string","format":"date-time","description":"只返回此时间之后的记录"},"limit":{"type":"integer","minimum":1,"maximum":1000,"default":30}}),
+            vec![],
+            true,
+        ),
+        tool_definition(
             "context_note",
             "追加探索记录；不会覆盖用户说明或项目路径",
             json!({"host":{"type":"string"},"text":{"type":"string"}}),
@@ -136,6 +148,20 @@ fn invoke(
                 .filter(|h| a.tag.as_ref().is_none_or(|tag| h.tags.contains(tag)))
                 .collect::<Vec<_>>(),
         )?);
+    }
+    if name == "history" {
+        let limit = a.limit.unwrap_or(30);
+        error::require(
+            (1..=1000).contains(&limit),
+            "invalid_arguments",
+            "记录数量须在 1 到 1000 之间",
+        )?;
+        return Ok(serde_json::to_value(store.history(
+            a.host.as_deref(),
+            a.status,
+            a.since,
+            limit,
+        )?)?);
     }
     let host = required(a.host, "host")?;
     if name == "host_show" {
@@ -201,6 +227,7 @@ fn invoke(
                 a.connection.as_deref(),
                 &required(a.command, "command")?,
                 a.cwd.as_deref().or(path.as_deref()),
+                a.stdin.map(String::into_bytes),
                 &options,
             )?
         }

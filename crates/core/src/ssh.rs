@@ -246,22 +246,26 @@ impl OpenSsh<'_> {
             .map_err(|e| Error::new("process_start_failed", format!("无法启动 SSH 工具：{e}")))?;
         Ok(status.code().unwrap_or(255))
     }
+    /// `stdin` is passed to the command, so a script can go to `python3 -` without another layer of quoting.
     pub fn exec(
         &self,
         host: &str,
         connection: Option<&str>,
         command: &str,
         cwd: Option<&str>,
+        stdin: Option<Vec<u8>>,
         options: &ExecutionOptions,
     ) -> Result<OperationResult> {
-        self.exec_kind(host, connection, command, cwd, options, "exec")
+        self.exec_kind(host, connection, command, cwd, stdin, options, "exec")
     }
+    #[allow(clippy::too_many_arguments)]
     fn exec_kind(
         &self,
         host: &str,
         connection: Option<&str>,
         command: &str,
         cwd: Option<&str>,
+        stdin: Option<Vec<u8>>,
         options: &ExecutionOptions,
         kind: &str,
     ) -> Result<OperationResult> {
@@ -284,6 +288,7 @@ impl OpenSsh<'_> {
         let clock = Instant::now();
         let operation_id = Uuid::new_v4();
         let session = self.session(&h, c)?;
+        let prepared = clock.elapsed();
         let token = Uuid::new_v4().simple().to_string();
         let script = match cwd {
             Some(path) => format!("cd {} && {}", shell_quote(path), command),
@@ -294,10 +299,14 @@ impl OpenSsh<'_> {
             shell_quote(&script)
         );
         let mut cmd = self.command("ssh", &session);
-        cmd.args(["-T", "-n", "--", &session.alias, &wrapper]);
+        cmd.arg("-T");
+        if stdin.is_none() {
+            cmd.arg("-n");
+        }
+        cmd.args(["--", &session.alias, &wrapper]);
         let raw = process::run(
             cmd,
-            None,
+            stdin,
             options.timeout,
             options.cancel.clone(),
             options.output_limit + 256,
@@ -309,6 +318,7 @@ impl OpenSsh<'_> {
             kind,
             operation_id,
             started_at,
+            prepared,
             clock.elapsed(),
             raw,
             &session.broker,
@@ -329,6 +339,7 @@ impl OpenSsh<'_> {
             host,
             connection,
             "uname -s; uname -m; id -un; printf '%s\\n' \"$HOME\"",
+            None,
             None,
             options,
             "check",
@@ -357,27 +368,18 @@ impl OpenSsh<'_> {
         kind: &str,
         operation_id: Uuid,
         started_at: chrono::DateTime<Utc>,
+        prepared: Duration,
         duration: Duration,
         raw: ProcessResult,
         broker: &Broker,
         limit: usize,
         token: Option<&str>,
     ) -> OperationResult {
-        let mut stderr = String::from_utf8_lossy(&raw.stderr.bytes).into_owned();
-        if let Some(t) = token {
-            stderr = stderr.replace(&format!("\x1e{t}:start\x1f"), "");
-            if let Some(code) = raw.stderr.remote_exit {
-                stderr = stderr.replace(&format!("\x1e{t}:exit:{code}\x1f"), "");
-            }
-            // The output limit can end in the middle of our final control record; never expose a fragment to callers.
-            if let Some(i) = stderr.find(&format!("\x1e{t}")) {
-                stderr.truncate(i);
-            }
-        }
-        let mut stdout = String::from_utf8_lossy(&raw.stdout.bytes).into_owned();
+        // ssh's own error messages are short and come first, so the kept head holds them for the checks below.
+        let stderr = String::from_utf8_lossy(&raw.stderr.bytes).into_owned();
         let phase = if raw.stderr.remote_exit.is_some() {
             ExecutionPhase::Completed
-        } else if raw.stderr.started {
+        } else if raw.stderr.started.is_some() {
             ExecutionPhase::Started
         } else {
             ExecutionPhase::Unknown
@@ -446,7 +448,7 @@ impl OpenSsh<'_> {
         };
         let stdout_truncated = raw.stdout.total > limit as u64;
         let overhead = token.map_or(0, |t| {
-            (format!("\x1e{t}:start\x1f").len() * usize::from(raw.stderr.started)
+            (format!("\x1e{t}:start\x1f").len() * usize::from(raw.stderr.started.is_some())
                 + raw
                     .stderr
                     .remote_exit
@@ -454,10 +456,21 @@ impl OpenSsh<'_> {
         });
         let stderr_bytes = raw.stderr.total.saturating_sub(overhead);
         let stderr_truncated = stderr_bytes > limit as u64;
-        truncate_utf8(&mut stdout, limit);
-        truncate_utf8(&mut stderr, limit);
-        broker.redact(&mut stdout);
-        broker.redact(&mut stderr);
+        let (stdout, stdout_tail) =
+            excerpt(&raw.stdout, stdout_truncated, limit, |s| broker.redact(s));
+        let (stderr, stderr_tail) = excerpt(&raw.stderr, stderr_truncated, limit, |s| {
+            if let Some(t) = token {
+                *s = s.replace(&format!("\x1e{t}:start\x1f"), "");
+                if let Some(code) = raw.stderr.remote_exit {
+                    *s = s.replace(&format!("\x1e{t}:exit:{code}\x1f"), "");
+                }
+                // A dropped connection can end in the middle of our final control record; never expose a fragment.
+                if let Some(i) = s.find(&format!("\x1e{t}")) {
+                    s.truncate(i);
+                }
+            }
+            broker.redact(s)
+        });
         OperationResult {
             schema_version: 1,
             operation_id,
@@ -466,12 +479,16 @@ impl OpenSsh<'_> {
             kind: kind.into(),
             started_at,
             duration_ms: duration.as_millis() as u64,
+            prepare_ms: prepared.as_millis() as u64,
+            connect_ms: raw.stderr.started.map(|d| d.as_millis() as u64),
             status,
             phase,
             exit_code: raw.stderr.remote_exit,
             termination: raw.termination,
             stdout,
             stderr,
+            stdout_tail,
+            stderr_tail,
             stdout_bytes: raw.stdout.total,
             stderr_bytes,
             stdout_truncated,
@@ -481,6 +498,50 @@ impl OpenSsh<'_> {
         }
     }
 }
+/// A stream within the limit comes back whole; a longer one as its first and last halves of the limit.
+/// `clean` runs before cutting, so a secret the output holds in full is redacted even where the cut would split it.
+fn excerpt(
+    capture: &process::Capture,
+    truncated: bool,
+    limit: usize,
+    clean: impl Fn(&mut String),
+) -> (String, String) {
+    let text = |bytes: &[u8]| {
+        let mut s = String::from_utf8_lossy(bytes).into_owned();
+        clean(&mut s);
+        s
+    };
+    let (mut head, tail) = match capture.whole() {
+        Some(whole) if !truncated => return (text(&whole), String::new()),
+        Some(whole) => {
+            let s = text(&whole);
+            let tail = suffix_utf8(&s, limit / 2).to_owned();
+            (s, tail)
+        }
+        None => {
+            let bytes: Vec<u8> = capture.tail.iter().copied().collect();
+            // The kept tail can begin inside a multi-byte character; skip its continuation bytes.
+            let start = bytes
+                .iter()
+                .take(3)
+                .take_while(|b| **b & 0xC0 == 0x80)
+                .count();
+            (
+                text(&capture.bytes),
+                suffix_utf8(&text(&bytes[start..]), limit / 2).to_owned(),
+            )
+        }
+    };
+    truncate_utf8(&mut head, limit - limit / 2);
+    (head, tail)
+}
+fn suffix_utf8(s: &str, limit: usize) -> &str {
+    let mut i = s.len().saturating_sub(limit);
+    while !s.is_char_boundary(i) {
+        i += 1;
+    }
+    &s[i..]
+}
 fn truncate_utf8(s: &mut String, limit: usize) {
     if s.len() > limit {
         let mut i = limit;
@@ -488,5 +549,37 @@ fn truncate_utf8(s: &mut String, limit: usize) {
             i -= 1;
         }
         s.truncate(i);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn capture(head: &[u8], tail: &[u8], total: u64) -> process::Capture {
+        process::Capture {
+            bytes: head.to_vec(),
+            tail: tail.iter().copied().collect(),
+            total,
+            started: None,
+            remote_exit: None,
+            io_error: false,
+        }
+    }
+
+    #[test]
+    fn excerpt_returns_halves_of_a_long_stream() {
+        // The kept tail starts inside "尾", and a four-byte half only fits the whole "束".
+        let c = capture(b"first-part", &"尾部结束".as_bytes()[1..], 100_000);
+        assert_eq!(excerpt(&c, true, 8, |_| {}), ("firs".into(), "束".into()));
+    }
+
+    #[test]
+    fn excerpt_redacts_before_cutting() {
+        let c = capture(b"token=secret-v", b"alue done", 23);
+        let (head, tail) = excerpt(&c, true, 16, |s| {
+            *s = s.replace("secret-value", "[REDACTED]")
+        });
+        assert_eq!((head.as_str(), tail.as_str()), ("token=[R", "ED] done"));
     }
 }

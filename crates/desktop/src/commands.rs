@@ -91,7 +91,7 @@ fn ssh_version() -> Option<String> {
 pub async fn overview() -> Result<Overview> {
     blocking(|| {
         let store = store()?;
-        let history = store.history(None, 1000)?;
+        let history = store.history(None, None, None, 1000)?;
         let mut hosts = vec![];
         for host in store.list()? {
             let records = history.iter().filter(|r| r.host_id == host.id);
@@ -120,7 +120,7 @@ pub async fn overview() -> Result<Overview> {
 
 #[tauri::command]
 pub async fn history(limit: u32) -> Result<Vec<OperationRecord>> {
-    blocking(move || store()?.history(None, limit.min(1000))).await
+    blocking(move || store()?.history(None, None, None, limit.min(1000))).await
 }
 
 #[tauri::command]

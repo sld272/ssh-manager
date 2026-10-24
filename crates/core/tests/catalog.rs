@@ -200,9 +200,105 @@ fn output_capture_drains_after_limit_and_detects_completion() {
     )
     .unwrap();
     assert_eq!(result.stdout.total, 100000);
-    assert_eq!(result.stdout.bytes.len(), 32);
+    assert_eq!(result.stdout.bytes.len() + result.stdout.tail.len(), 32);
     assert_eq!(result.stderr.remote_exit, Some(255));
-    assert!(result.stderr.started);
+    assert!(result.stderr.started.is_some());
+}
+#[test]
+fn output_capture_keeps_the_end_of_a_long_stream() {
+    let run = |script: &str| {
+        let mut cmd = std::process::Command::new("sh");
+        cmd.args(["-c", script]);
+        process::run(
+            cmd,
+            None,
+            Duration::from_secs(2),
+            Arc::new(AtomicBool::new(false)),
+            32,
+            None,
+        )
+        .unwrap()
+    };
+    let long = run("printf begin; head -c 100000 /dev/zero; printf finished");
+    assert_eq!(long.stdout.bytes.len(), 16);
+    assert!(long.stdout.bytes.starts_with(b"begin"));
+    assert!(Vec::from(long.stdout.tail).ends_with(b"finished"));
+    let short = run("printf 'short enough to keep in full'");
+    assert_eq!(
+        short.stdout.whole().unwrap(),
+        b"short enough to keep in full"
+    );
+}
+#[test]
+fn exec_stdin_reaches_the_command() {
+    let mut cmd = std::process::Command::new("sh");
+    cmd.args(["-c", "cat"]);
+    let result = process::run(
+        cmd,
+        Some(b"print('it''s \"quoted\"')".to_vec()),
+        Duration::from_secs(2),
+        Arc::new(AtomicBool::new(false)),
+        1024,
+        None,
+    )
+    .unwrap();
+    assert_eq!(result.stdout.whole().unwrap(), b"print('it''s \"quoted\"')");
+}
+#[test]
+fn history_filters_by_status_and_time() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path()).unwrap();
+    let h = Host::new(
+        "vm".into(),
+        "192.0.2.1".into(),
+        "user".into(),
+        22,
+        Authentication::Agent,
+    );
+    store.save(&h).unwrap();
+    let now = chrono::Utc::now();
+    for (minutes, status) in [
+        (30, Status::Succeeded),
+        (20, Status::ResultUnknown),
+        (10, Status::Succeeded),
+    ] {
+        let r = OperationResult {
+            schema_version: 1,
+            operation_id: uuid::Uuid::new_v4(),
+            host_id: h.id,
+            connection_id: h.connections[0].id,
+            kind: "exec".into(),
+            started_at: now - chrono::Duration::minutes(minutes),
+            duration_ms: 1,
+            prepare_ms: 1,
+            connect_ms: None,
+            status,
+            phase: ExecutionPhase::Completed,
+            exit_code: None,
+            termination: None,
+            stdout: String::new(),
+            stderr: String::new(),
+            stdout_tail: String::new(),
+            stderr_tail: String::new(),
+            stdout_bytes: 0,
+            stderr_bytes: 0,
+            stdout_truncated: false,
+            stderr_truncated: false,
+            next_step: None,
+            transfer: None,
+        };
+        store.record(&r, &h.name, "test", None).unwrap();
+    }
+    let unknown = store
+        .history(Some("vm"), Some(Status::ResultUnknown), None, 10)
+        .unwrap();
+    assert_eq!(unknown.len(), 1);
+    assert_eq!(unknown[0].status, Status::ResultUnknown);
+    let recent = store
+        .history(None, None, Some(now - chrono::Duration::minutes(25)), 10)
+        .unwrap();
+    assert_eq!(recent.len(), 2);
+    assert_eq!(store.history(None, None, None, 10).unwrap().len(), 3);
 }
 #[test]
 fn timeouts_kill_local_descendants_and_release_pipes() {

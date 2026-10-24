@@ -236,12 +236,19 @@ pub struct OperationResult {
     pub kind: String,
     pub started_at: DateTime<Utc>,
     pub duration_ms: u64,
+    /// Reading credentials and writing the per-operation config, before ssh starts.
+    pub prepare_ms: u64,
+    /// From starting ssh until the remote shell ran, which covers the network and login; none when it never ran.
+    pub connect_ms: Option<u64>,
     pub status: Status,
     pub phase: ExecutionPhase,
     pub exit_code: Option<i32>,
     pub termination: Option<String>,
+    /// When a stream exceeds the output limit, `stdout`/`stderr` hold its beginning and the `_tail` fields its end.
     pub stdout: String,
     pub stderr: String,
+    pub stdout_tail: String,
+    pub stderr_tail: String,
     pub stdout_bytes: u64,
     pub stderr_bytes: u64,
     pub stdout_truncated: bool,
@@ -270,6 +277,11 @@ pub struct OperationRecord {
     pub kind: String,
     pub started_at: DateTime<Utc>,
     pub duration_ms: u64,
+    /// Operations recorded before timings were kept have neither field.
+    #[serde(default)]
+    pub prepare_ms: Option<u64>,
+    #[serde(default)]
+    pub connect_ms: Option<u64>,
     pub status: Status,
     pub phase: ExecutionPhase,
     pub exit_code: Option<i32>,

@@ -1,5 +1,6 @@
 use crate::{Error, Result};
 use std::{
+    collections::VecDeque,
     io::{Read, Write},
     os::unix::process::CommandExt,
     process::{Command, Stdio},
@@ -14,11 +15,24 @@ use zeroize::Zeroize;
 
 #[derive(Debug)]
 pub struct Capture {
+    /// The first half of the kept bytes; `tail` keeps the last half, so a long stream still shows how it ended.
     pub bytes: Vec<u8>,
+    pub tail: VecDeque<u8>,
     pub total: u64,
-    pub started: bool,
+    /// Time from launching ssh until the remote shell printed its start record.
+    pub started: Option<Duration>,
     pub remote_exit: Option<i32>,
     pub io_error: bool,
+}
+impl Capture {
+    /// The whole stream, when the head and tail together still hold every byte of it.
+    pub fn whole(&self) -> Option<Vec<u8>> {
+        (self.total == (self.bytes.len() + self.tail.len()) as u64).then(|| {
+            let mut v = self.bytes.clone();
+            v.extend(&self.tail);
+            v
+        })
+    }
 }
 pub struct ProcessResult {
     pub code: Option<i32>,
@@ -26,36 +40,47 @@ pub struct ProcessResult {
     pub stderr: Capture,
     pub termination: Option<String>,
 }
-fn capture(mut stream: impl Read, limit: usize, token: Option<String>) -> Capture {
+fn capture(
+    mut stream: impl Read,
+    limit: usize,
+    token: Option<String>,
+    spawned: Instant,
+) -> Capture {
+    let head = limit - limit / 2;
     let mut out = Capture {
         bytes: Vec::new(),
+        tail: VecDeque::new(),
         total: 0,
-        started: false,
+        started: None,
         remote_exit: None,
         io_error: false,
     };
     let mut buf = [0u8; 8192];
-    let mut tail = Vec::new();
+    let mut window = Vec::new();
     loop {
         match stream.read(&mut buf) {
             Ok(0) => break,
             Ok(n) => {
                 out.total += n as u64;
-                out.bytes
-                    .extend_from_slice(&buf[..n.min(limit.saturating_sub(out.bytes.len()))]);
+                let kept = n.min(head.saturating_sub(out.bytes.len()));
+                out.bytes.extend_from_slice(&buf[..kept]);
+                out.tail.extend(&buf[kept..n]);
+                if out.tail.len() > limit / 2 {
+                    out.tail.drain(..out.tail.len() - limit / 2);
+                }
                 if let Some(t) = &token {
-                    tail.extend_from_slice(&buf[..n]);
-                    let s = String::from_utf8_lossy(&tail);
-                    if s.contains(&format!("\x1e{t}:start\x1f")) {
-                        out.started = true;
+                    window.extend_from_slice(&buf[..n]);
+                    let s = String::from_utf8_lossy(&window);
+                    if out.started.is_none() && s.contains(&format!("\x1e{t}:start\x1f")) {
+                        out.started = Some(spawned.elapsed());
                     }
                     if let Some((_, after)) = s.split_once(&format!("\x1e{t}:exit:")) {
                         if let Some((code, _)) = after.split_once('\x1f') {
                             out.remote_exit = code.parse().ok();
                         }
                     }
-                    if tail.len() > 256 {
-                        tail.drain(..tail.len() - 256);
+                    if window.len() > 256 {
+                        window.drain(..window.len() - 256);
                     }
                 }
             }
@@ -89,6 +114,7 @@ pub fn run(
         .spawn()
         .map_err(|e| Error::new("process_start_failed", format!("无法启动 SSH 工具：{e}")))?;
     let pid = child.id();
+    let start = Instant::now();
     let writer = input.map(|mut data| {
         let mut stdin = child.stdin.take().expect("piped stdin");
         thread::spawn(move || {
@@ -98,9 +124,8 @@ pub fn run(
     });
     let stdout = child.stdout.take().expect("piped stdout");
     let stderr = child.stderr.take().expect("piped stderr");
-    let out = thread::spawn(move || capture(stdout, limit, None));
-    let err = thread::spawn(move || capture(stderr, limit, token));
-    let start = Instant::now();
+    let out = thread::spawn(move || capture(stdout, limit, None, start));
+    let err = thread::spawn(move || capture(stderr, limit, token, start));
     let mut termination = None;
     let status = loop {
         if let Some(status) = child.try_wait()? {

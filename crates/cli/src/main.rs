@@ -3,7 +3,7 @@ use clap::{Args, Parser, Subcommand};
 use serde_json::{Value, json};
 use ssh_manager_core::{importer, transfer::TransferMode, trust, *};
 use std::{
-    io::{self, IsTerminal, Read},
+    io::{self, IsTerminal, Read, Write},
     path::PathBuf,
     sync::{Arc, atomic::AtomicBool},
     time::Duration,
@@ -68,6 +68,8 @@ enum Commands {
         cwd: Option<String>,
         #[arg(long, conflicts_with = "cwd", help = "已保存的项目名称")]
         project: Option<String>,
+        #[arg(long, help = "把标准输入转交给远端命令，例如用 python3 - 运行本机脚本")]
+        stdin: bool,
         #[command(flatten)]
         options: RunArgs,
         #[arg(last = true, required = true, help = "完整的 Shell 命令，请用引号包裹")]
@@ -100,6 +102,10 @@ enum Commands {
     History {
         #[arg(long)]
         host: Option<String>,
+        #[arg(long, value_parser = parse_status, help = "只看此结果的记录，例如 result_unknown")]
+        status: Option<Status>,
+        #[arg(long, help = "只看此时间之后的记录，例如 2026-10-24T08:00:00+08:00")]
+        since: Option<chrono::DateTime<chrono::Utc>>,
         #[arg(long,default_value_t=30,value_parser=clap::value_parser!(u32).range(1..=1000))]
         limit: u32,
     },
@@ -129,6 +135,9 @@ impl RunArgs {
             reason: self.reason.clone(),
         }
     }
+}
+fn parse_status(s: &str) -> std::result::Result<Status, String> {
+    serde_json::from_value(Value::String(s.into())).map_err(|_| format!("未知的结果：{s}"))
 }
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum Mode {
@@ -763,6 +772,7 @@ fn dispatch(cli: &Cli, cancel: Arc<AtomicBool>) -> Result<Value> {
             host,
             cwd,
             project,
+            stdin,
             options,
             command,
         } => {
@@ -779,11 +789,18 @@ fn dispatch(cli: &Cli, cancel: Arc<AtomicBool>) -> Result<Value> {
                         .ok_or_else(|| Error::new("project_not_found", "未找到此项目"))
                 })
                 .transpose()?;
+            let input = stdin
+                .then(|| {
+                    let mut data = Vec::new();
+                    io::stdin().read_to_end(&mut data).map(|_| data)
+                })
+                .transpose()?;
             to_value(ssh.exec(
                 host,
                 options.connection.as_deref(),
                 command,
                 cwd.as_deref().or(project_path.as_deref()),
+                input,
                 &options.execution(cancel),
             )?)
         }
@@ -816,7 +833,12 @@ fn dispatch(cli: &Cli, cancel: Arc<AtomicBool>) -> Result<Value> {
             destination,
             &options.execution(cancel),
         )?),
-        Commands::History { host, limit } => to_value(store.history(host.as_deref(), *limit)?),
+        Commands::History {
+            host,
+            status,
+            since,
+            limit,
+        } => to_value(store.history(host.as_deref(), *status, *since, *limit)?),
         Commands::Doctor => {
             let output = std::process::Command::new("ssh").arg("-V").output()?;
             let version = String::from_utf8_lossy(&output.stderr).trim().to_owned();
@@ -900,11 +922,20 @@ fn render(value: &Value, cli: &Cli) -> Result<()> {
         if !r.stdout.is_empty() {
             print!("{}", r.stdout);
         }
+        if !r.stdout_tail.is_empty() {
+            io::stdout().flush()?;
+            eprintln!("\n……");
+            print!("{}", r.stdout_tail);
+        }
+        io::stdout().flush()?;
         if !r.stderr.is_empty() {
             eprint!("{}", r.stderr);
         }
+        if !r.stderr_tail.is_empty() {
+            eprint!("\n……\n{}", r.stderr_tail);
+        }
         if r.stdout_truncated || r.stderr_truncated {
-            eprintln!("\n输出已截断，可缩小查询范围后继续查看。");
+            eprintln!("\n输出过长，中间部分已省略，可缩小查询范围后继续查看。");
         }
         if let Some(next) = r.next_step {
             eprintln!("\n{next}");

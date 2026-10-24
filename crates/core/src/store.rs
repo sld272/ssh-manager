@@ -135,6 +135,8 @@ impl Store {
             kind: result.kind.clone(),
             started_at: result.started_at,
             duration_ms: result.duration_ms,
+            prepare_ms: Some(result.prepare_ms),
+            connect_ms: result.connect_ms,
             status: result.status,
             phase: result.phase,
             exit_code: result.exit_code,
@@ -153,12 +155,29 @@ impl Store {
         )?;
         Ok(())
     }
-    pub fn history(&self, host: Option<&str>, limit: u32) -> Result<Vec<OperationRecord>> {
+    pub fn history(
+        &self,
+        host: Option<&str>,
+        status: Option<Status>,
+        since: Option<chrono::DateTime<chrono::Utc>>,
+        limit: u32,
+    ) -> Result<Vec<OperationRecord>> {
         let host_id = host
             .map(|s| self.host(s).map(|h| h.id.to_string()))
             .transpose()?;
-        let mut q = self.db.prepare("SELECT body FROM operations WHERE (?1 IS NULL OR host_id=?1) ORDER BY started_at DESC LIMIT ?2")?;
-        let rows = q.query_map(params![host_id, limit], |r| r.get::<_, String>(0))?;
+        let status = status.map(serde_json::to_value).transpose()?;
+        // started_at is written by to_rfc3339 in UTC, so the same formatting compares in time order.
+        let since = since.map(|t| t.to_rfc3339());
+        let mut q = self.db.prepare("SELECT body FROM operations WHERE (?1 IS NULL OR host_id=?1) AND (?2 IS NULL OR json_extract(body,'$.status')=?2) AND (?3 IS NULL OR started_at>=?3) ORDER BY started_at DESC LIMIT ?4")?;
+        let rows = q.query_map(
+            params![
+                host_id,
+                status.as_ref().and_then(|s| s.as_str()),
+                since,
+                limit
+            ],
+            |r| r.get::<_, String>(0),
+        )?;
         rows.map(|r| Ok(serde_json::from_str(&r?)?)).collect()
     }
     pub fn export(&self) -> Result<CatalogExport> {

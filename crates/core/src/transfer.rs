@@ -128,7 +128,7 @@ impl OpenSsh<'_> {
                 ssh::shell_quote(destination)
             ),
         };
-        let preflight = self.exec(host, connection, &target_type, None, options)?;
+        let preflight = self.exec(host, connection, &target_type, None, None, options)?;
         if matches!(mode, TransferMode::Contents) {
             // Destination exists: merge entries into this directory instead of creating another basename level.
             if preflight.successful() {
@@ -180,6 +180,7 @@ impl OpenSsh<'_> {
                 ssh::shell_quote(source),
                 ssh::shell_quote(source)
             ),
+            None,
             None,
             options,
         )?;
@@ -233,6 +234,7 @@ impl OpenSsh<'_> {
         let clock = Instant::now();
         let id = Uuid::new_v4();
         let session = self.session(&h, c)?;
+        let prepared = clock.elapsed();
         let mut cmd = self.command("sftp", &session);
         // -b enables fail-fast batch commands; explicitly disable its implicit BatchMode to permit our askpass broker.
         cmd.args(["-oBatchMode=no", "-b", "-", "--", &session.alias]);
@@ -266,6 +268,7 @@ impl OpenSsh<'_> {
             &receipt.direction,
             id,
             started_at,
+            prepared,
             clock.elapsed(),
             raw,
             &session.broker,
