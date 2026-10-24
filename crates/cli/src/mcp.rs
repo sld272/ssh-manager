@@ -398,10 +398,10 @@ pub fn serve(root: PathBuf, shutdown: Arc<AtomicBool>) -> Result<()> {
             continue;
         }
         if method == "notifications/cancelled" {
-            if let Some(id) = request["params"].get("requestId") {
-                if let Some(cancel) = jobs.lock().expect("job lock").get(&id.to_string()) {
-                    cancel.store(true, Ordering::Relaxed);
-                }
+            if let Some(id) = request["params"].get("requestId")
+                && let Some(cancel) = jobs.lock().expect("job lock").get(&id.to_string())
+            {
+                cancel.store(true, Ordering::Relaxed);
             }
             continue;
         }

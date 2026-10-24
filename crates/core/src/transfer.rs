@@ -284,11 +284,11 @@ mv -f "$tmp" "$dest" || {{ rm -f "$tmp"; exit 4; }}
             },
             options,
         )?;
-        if result.successful() {
-            if let Err(e) = staging.persist(&destination) {
-                result.status = Status::TransferFailed;
-                result.next_step = Some(format!("已下载，但无法保存到目标位置：{}", e.error));
-            }
+        if result.successful()
+            && let Err(e) = staging.persist(&destination)
+        {
+            result.status = Status::TransferFailed;
+            result.next_step = Some(format!("已下载，但无法保存到目标位置：{}", e.error));
         }
         let h = self.store.host(host)?;
         self.store

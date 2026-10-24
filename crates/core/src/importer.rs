@@ -124,10 +124,10 @@ fn tokens(line: &str) -> Result<Vec<String>> {
         }
     }
     let mut text = line[..end].trim().to_owned();
-    if let Some(i) = text.find('=') {
-        if !text[..i].contains(char::is_whitespace) {
-            text.replace_range(i..=i, " ");
-        }
+    if let Some(i) = text.find('=')
+        && !text[..i].contains(char::is_whitespace)
+    {
+        text.replace_range(i..=i, " ");
     }
     shell_words::split(&text)
         .map_err(|_| Error::new("invalid_ssh_config", "SSH 配置中有未闭合的引号"))

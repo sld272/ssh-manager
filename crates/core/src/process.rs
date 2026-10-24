@@ -81,10 +81,10 @@ fn capture(
                     if out.started.is_none() && s.contains(&format!("\x1e{t}:start\x1f")) {
                         out.started = Some(spawned.elapsed());
                     }
-                    if let Some((_, after)) = s.split_once(&format!("\x1e{t}:exit:")) {
-                        if let Some((code, _)) = after.split_once('\x1f') {
-                            out.remote_exit = code.parse().ok();
-                        }
+                    if let Some((_, after)) = s.split_once(&format!("\x1e{t}:exit:"))
+                        && let Some((code, _)) = after.split_once('\x1f')
+                    {
+                        out.remote_exit = code.parse().ok();
                     }
                     if window.len() > 256 {
                         window.drain(..window.len() - 256);

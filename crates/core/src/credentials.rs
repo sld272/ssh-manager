@@ -286,15 +286,14 @@ impl Broker {
                         let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
                         let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
                         let mut data = String::new();
-                        if (&mut stream).take(8192).read_to_string(&mut data).is_ok() {
-                            if let Ok(r) = serde_json::from_str::<Request>(&data) {
-                                if r.token == worker_token {
-                                    if let Some(secret) = prompts.get(&r.prompt) {
-                                        let _ = stream.write_all(secret.as_bytes());
-                                    } else {
-                                        worker_denied.store(true, Ordering::Relaxed);
-                                    }
-                                }
+                        if (&mut stream).take(8192).read_to_string(&mut data).is_ok()
+                            && let Ok(r) = serde_json::from_str::<Request>(&data)
+                            && r.token == worker_token
+                        {
+                            if let Some(secret) = prompts.get(&r.prompt) {
+                                let _ = stream.write_all(secret.as_bytes());
+                            } else {
+                                worker_denied.store(true, Ordering::Relaxed);
                             }
                         }
                     }

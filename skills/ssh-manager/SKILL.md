@@ -9,7 +9,7 @@ description: 使用本机 ssh-manager 管理已配置的 SSH 服务器，读取�
 
 使用 `exec NAME --json -- '完整命令'`，项目操作优先 `--project PROJECT` 或绝对 `--cwd`。脚本含引号、JSON 或 heredoc 时，用 `--stdin` 把脚本从标准输入传给解释器，例如 `exec NAME --json --stdin -- 'sudo -n python3 -' < script.py`；MCP 的 `exec` 对应 `stdin` 参数。按任务设置 `--timeout`；可用 `--reason` 记录不含秘密的目的。不要向命令参数、日志、模型上下文或导出配置传入 SSH 密码和私钥正文。凭据由用户在本机 `credential set` 绑定。
 
-以 JSON 的 status、phase、exit_code 判断结果。CLI 非零退出时也应读取 JSON。首次连接会自动记录服务器身份；认证失败或 host_key_changed 交给用户处理，不要设法绕过公钥变化。超时、取消、断线的 result_unknown 不证明远端停止，不自动重试部署、重启等有副作用的操作；先检查实际状态。
+以 JSON 的 status、phase、exit_code 判断结果。命令的退出码应当表示任务是否达成：检查、统计类命令不要以 `grep -c`、`grep -q`、`test` 这类“没找到就返回非零”的步骤收尾，期望为空时写成断言（如 `! pgrep -x NAME`），只是查看时末尾加 `|| true`。CLI 非零退出时也应读取 JSON。首次连接会自动记录服务器身份；认证失败或 host_key_changed 交给用户处理，不要设法绕过公钥变化。超时、取消、断线的 result_unknown 不证明远端停止，不自动重试部署、重启等有副作用的操作；先检查实际状态。
 
 上传普通文件使用完整远端文件名：文件先写入同目录的临时文件，服务器核对 SHA-256 后才替换目标，并保留原文件的权限和属主；回执的 `transfer.sha256` 就是核对过的值，无需再另行校验。失败或中断时目标保持原样，只有 next_step 提示“可能只写入了一部分”时例外。目录使用 `--mode contents` 合并内容，不会删除多余文件，失败可能留有部分内容，先核验再重试。下载目前支持单个普通文件，需要完整本地文件名。不要把上传成功当作部署成功。
 
