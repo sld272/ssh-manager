@@ -87,14 +87,15 @@ ssh-manager 是一个本地 MCP 服务（只用 stdio，不监听网络端口）
 添加后先调用 host_list，确认能看到我的主机。使用方法见：https://github.com/sld272/ssh-manager/blob/main/skills/ssh-manager/SKILL.md
 ```
 
-提供的工具有 `host_list`、`host_show`、`check`、`exec`、`upload`、`download`、`history` 和 `context_note`。管理凭据和主机信任仍需通过 CLI。
+提供的工具有 `host_list`、`host_show`、`check`、`exec`、`job_start`、`job_status`、`job_cancel`、`upload`、`download`、`history` 和 `context_note`。管理凭据和主机信任仍需通过 CLI。
 
 [`skills/ssh-manager/SKILL.md`](skills/ssh-manager/SKILL.md) 是一份 skill，告诉 agent 如何操作：先找到主机，读取上下文，再执行命令，最后解读结果。
 
 ## 注意事项
 
 - `exec` 可以执行任意 Shell 命令，拥有对应 SSH 账号的全部权限。需要真正的只读限制时，请在服务器上使用受限账号。
-- `result_unknown` 表示连接中断、超时或被取消，远端命令可能仍在运行。重试有副作用的操作前，请先确认实际状态。
+- `result_unknown` 表示连接中断、超时或被取消，远端命令可能仍在运行。重试有副作用的操作前，请先确认实际状态。耗时较长的命令可以改用后台任务（`job start`）：断开连接后继续运行，之后用 `job status` 查看状态和输出。
+- 后台任务的输出保存在服务器的 `~/.local/state/ssh-manager/jobs` 中，只有该账号可读；结束超过一周的任务会在下次启动任务时清理。
 - 不会自动填写 MFA、keyboard-interactive 或 sudo 密码。
 - 操作记录只保存目标、时间、状态和连接耗时，不保存命令内容、输入和输出。
 

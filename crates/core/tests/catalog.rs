@@ -286,6 +286,7 @@ fn history_filters_by_status_and_time() {
             stderr_truncated: false,
             next_step: None,
             transfer: None,
+            job: None,
         };
         store.record(&r, &h.name, "test", None).unwrap();
     }

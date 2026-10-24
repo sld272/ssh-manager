@@ -75,6 +75,11 @@ enum Commands {
         #[arg(last = true, required = true, help = "完整的 Shell 命令，请用引号包裹")]
         command: String,
     },
+    #[command(about = "在后台运行远端命令，断开连接后继续执行")]
+    Job {
+        #[command(subcommand)]
+        command: JobCommand,
+    },
     #[command(about = "上传文件或目录内容")]
     Upload {
         host: String,
@@ -112,6 +117,41 @@ enum Commands {
     #[command(about = "检查本机工具和存储位置")]
     Doctor,
 }
+#[derive(Subcommand)]
+enum JobCommand {
+    #[command(about = "启动后台任务，立即返回任务 ID")]
+    Start {
+        host: String,
+        #[arg(long, conflicts_with = "project", help = "远端工作目录，使用绝对路径")]
+        cwd: Option<String>,
+        #[arg(long, conflicts_with = "cwd", help = "已保存的项目名称")]
+        project: Option<String>,
+        #[arg(long, help = "把标准输入转交给远端命令，例如用 python3 - 运行本机脚本")]
+        stdin: bool,
+        #[command(flatten)]
+        options: RunArgs,
+        #[arg(last = true, required = true, help = "完整的 Shell 命令，请用引号包裹")]
+        command: String,
+    },
+    #[command(about = "查看后台任务的状态和输出")]
+    Status {
+        host: String,
+        job: String,
+        #[arg(long, help = "从此字节位置继续读取输出；省略时读取最新的输出")]
+        offset: Option<u64>,
+        #[arg(long, default_value_t = 0, help = "任务未结束时最多等待的秒数")]
+        wait: u64,
+        #[command(flatten)]
+        options: RunArgs,
+    },
+    #[command(about = "终止后台任务；再次执行会强制结束")]
+    Cancel {
+        host: String,
+        job: String,
+        #[command(flatten)]
+        options: RunArgs,
+    },
+}
 #[derive(Args)]
 struct RunArgs {
     #[arg(long, help = "登录配置名称或 ID")]
@@ -135,6 +175,25 @@ impl RunArgs {
             reason: self.reason.clone(),
         }
     }
+}
+fn working_directory(
+    store: &Store,
+    host: &str,
+    cwd: &Option<String>,
+    project: &Option<String>,
+) -> Result<Option<String>> {
+    match project {
+        Some(name) => Ok(Some(store.host(host)?.project_path(name)?.to_owned())),
+        None => Ok(cwd.clone()),
+    }
+}
+fn read_stdin(enabled: bool) -> Result<Option<Vec<u8>>> {
+    Ok(enabled
+        .then(|| {
+            let mut data = Vec::new();
+            io::stdin().read_to_end(&mut data).map(|_| data)
+        })
+        .transpose()?)
 }
 fn parse_status(s: &str) -> std::result::Result<Status, String> {
     serde_json::from_value(Value::String(s.into())).map_err(|_| format!("未知的结果：{s}"))
@@ -775,35 +834,51 @@ fn dispatch(cli: &Cli, cancel: Arc<AtomicBool>) -> Result<Value> {
             stdin,
             options,
             command,
-        } => {
-            let project_path = project
-                .as_ref()
-                .map(|name| {
-                    store
-                        .host(host)?
-                        .context
-                        .projects
-                        .into_iter()
-                        .find(|p| p.name == *name)
-                        .map(|p| p.path)
-                        .ok_or_else(|| Error::new("project_not_found", "未找到此项目"))
-                })
-                .transpose()?;
-            let input = stdin
-                .then(|| {
-                    let mut data = Vec::new();
-                    io::stdin().read_to_end(&mut data).map(|_| data)
-                })
-                .transpose()?;
-            to_value(ssh.exec(
+        } => to_value(ssh.exec(
+            host,
+            options.connection.as_deref(),
+            command,
+            working_directory(&store, host, cwd, project)?.as_deref(),
+            read_stdin(*stdin)?,
+            &options.execution(cancel),
+        )?),
+        Commands::Job { command } => to_value(match command {
+            JobCommand::Start {
+                host,
+                cwd,
+                project,
+                stdin,
+                options,
+                command,
+            } => ssh.job_start(
                 host,
                 options.connection.as_deref(),
                 command,
-                cwd.as_deref().or(project_path.as_deref()),
-                input,
+                working_directory(&store, host, cwd, project)?.as_deref(),
+                read_stdin(*stdin)?,
                 &options.execution(cancel),
-            )?)
-        }
+            )?,
+            JobCommand::Status {
+                host,
+                job,
+                offset,
+                wait,
+                options,
+            } => ssh.job_status(
+                host,
+                options.connection.as_deref(),
+                job,
+                *offset,
+                *wait,
+                &options.execution(cancel),
+            )?,
+            JobCommand::Cancel { host, job, options } => ssh.job_cancel(
+                host,
+                options.connection.as_deref(),
+                job,
+                &options.execution(cancel),
+            )?,
+        }),
         Commands::Upload {
             host,
             source,
@@ -920,6 +995,18 @@ fn render(value: &Value, cli: &Cli) -> Result<()> {
         if let Some(receipt) = &r.transfer {
             println!("{} → {}", receipt.source, receipt.destination);
         }
+        if let Some(job) = &r.job {
+            let code = job
+                .exit_code
+                .map_or(String::new(), |c| format!(" · 退出码 {c}"));
+            let state = match job.state {
+                JobState::Running => "运行中",
+                JobState::Exited => "已结束",
+                JobState::Cancelled => "已终止",
+                JobState::Lost => "已中断",
+            };
+            println!("后台任务 {}：{state}{code}", job.id);
+        }
         if !r.stdout.is_empty() {
             print!("{}", r.stdout);
         }
@@ -937,6 +1024,12 @@ fn render(value: &Value, cli: &Cli) -> Result<()> {
         }
         if r.stdout_truncated || r.stderr_truncated {
             eprintln!("\n输出过长，中间部分已省略，可缩小查询范围后继续查看。");
+        }
+        if let Some(job) = r.job.as_ref().filter(|j| j.next_offset < j.output_bytes) {
+            eprintln!(
+                "\n后面还有输出，可用 --offset {} 继续读取。",
+                job.next_offset
+            );
         }
         if let Some(next) = r.next_step {
             eprintln!("\n{next}");

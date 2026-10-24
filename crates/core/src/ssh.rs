@@ -256,10 +256,20 @@ impl OpenSsh<'_> {
         stdin: Option<Vec<u8>>,
         options: &ExecutionOptions,
     ) -> Result<OperationResult> {
-        self.exec_kind(host, connection, command, cwd, stdin, options, "exec")
+        self.exec_kind(
+            host,
+            connection,
+            command,
+            cwd,
+            stdin,
+            options,
+            "exec",
+            |_, _, _| Ok(()),
+        )
     }
+    /// `finish` sees the result before it is recorded, with stdout's raw bytes when all of it was kept.
     #[allow(clippy::too_many_arguments)]
-    fn exec_kind(
+    pub(crate) fn exec_kind(
         &self,
         host: &str,
         connection: Option<&str>,
@@ -268,6 +278,7 @@ impl OpenSsh<'_> {
         stdin: Option<Vec<u8>>,
         options: &ExecutionOptions,
         kind: &str,
+        finish: impl FnOnce(&mut OperationResult, Option<Vec<u8>>, &Broker) -> Result<()>,
     ) -> Result<OperationResult> {
         error::require(
             !command.is_empty() && !command.contains('\0'),
@@ -321,7 +332,8 @@ impl OpenSsh<'_> {
             options.output_limit + 256,
             Some(token.clone()),
         )?;
-        let result = self.result(
+        let stdout = raw.stdout.whole();
+        let mut result = self.result(
             &h,
             c,
             kind,
@@ -334,9 +346,10 @@ impl OpenSsh<'_> {
             options.output_limit,
             Some(&token),
         );
+        let finished = finish(&mut result, stdout, &session.broker);
         self.store
             .record(&result, &h.name, &options.caller, options.reason.as_deref())?;
-        Ok(result)
+        finished.map(|_| result)
     }
     pub fn check(
         &self,
@@ -352,6 +365,7 @@ impl OpenSsh<'_> {
             None,
             options,
             "check",
+            |_, _, _| Ok(()),
         )?;
         if result.successful() {
             let lines: Vec<_> = result.stdout.lines().collect();
@@ -504,6 +518,7 @@ impl OpenSsh<'_> {
             stderr_truncated,
             next_step,
             transfer: None,
+            job: None,
         }
     }
 }

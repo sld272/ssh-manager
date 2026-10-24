@@ -87,14 +87,15 @@ Add it the way you support, for the current user rather than one project: your o
 Once it is added, call host_list to confirm you can see my hosts. How to use it: https://github.com/sld272/ssh-manager/blob/main/skills/ssh-manager/SKILL.md
 ```
 
-Tools: `host_list`, `host_show`, `check`, `exec`, `upload`, `download`, `history` and `context_note`. Managing credentials and host trust stays in the CLI.
+Tools: `host_list`, `host_show`, `check`, `exec`, `job_start`, `job_status`, `job_cancel`, `upload`, `download`, `history` and `context_note`. Managing credentials and host trust stays in the CLI.
 
 [`skills/ssh-manager/SKILL.md`](skills/ssh-manager/SKILL.md) is a skill that teaches agents the workflow: find the host, read its context, run the command, and interpret the result.
 
 ## Good to know
 
 - `exec` runs any shell command with the permissions of that SSH account. For a real read-only boundary, use a restricted server account.
-- `result_unknown` means the connection dropped, timed out or was cancelled. The remote command may still be running, so check before retrying anything with side effects.
+- `result_unknown` means the connection dropped, timed out or was cancelled. The remote command may still be running, so check before retrying anything with side effects. For commands that take long, start a background job instead (`job start`): it keeps running after the connection ends, and `job status` reads its state and output later.
+- A background job's output stays in `~/.local/state/ssh-manager/jobs` on the server, readable only by that account; finished jobs older than a week are removed when the next one starts.
 - MFA, keyboard-interactive and sudo passwords are never filled in automatically.
 - Operation history records the target, time, status and how long connecting took, but not command text, input or output.
 

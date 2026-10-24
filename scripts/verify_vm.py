@@ -129,6 +129,19 @@ with tempfile.TemporaryDirectory(prefix='sshm-verify-') as directory:
         expect('stable_identity_across_rename', before['id'] == after['id'] and bool(after['context']['agent_notes']))
         call('host', 'edit', 'renamed-vm', '--name', host)
 
+        launched = success(call('job', 'start', host, '--cwd', remote, '--', 'printf "$(pwd)"; sleep 2; exit 5'))
+        job = launched['job']
+        expect('job_starts_in_background', job['state'] == 'running' and launched['duration_ms'] < 30000, launched)
+        r = success(call('job', 'status', host, job['id'], '--wait', '20'))
+        expect('job_reports_exit_and_output', r['job']['state'] == 'exited' and r['job']['exit_code'] == 5 and r['stdout'] == remote, r)
+        r = success(call('job', 'status', host, job['id'], '--offset', '4'))
+        expect('job_output_offset', r['stdout'] == remote[4:] and r['job']['next_offset'] == len(remote.encode()), r)
+        job = success(call('job', 'start', host, '--', 'sleep 300'))['job']
+        r = success(call('job', 'cancel', host, job['id']))
+        left = execute(f"grep -lsxz SSH_MANAGER_JOB={job['id']} /proc/[0-9]*/environ")
+        expect('job_cancel_stops_its_processes', r['job']['state'] == 'cancelled' and r['job']['exit_code'] == 143 and left['stdout'] == '', (r, left))
+        expect('job_unknown_id', call('job', 'status', host, uuid.uuid4().hex).get('error', {}).get('code') == 'job_not_found')
+
         cancel_marker = remote + '/cancel-started'
         process = subprocess.Popen([binary, '--json', '--data-dir', str(data), 'exec', host, '--', f'printf started > {shlex.quote(cancel_marker)}; sleep 15'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         try:
@@ -218,7 +231,7 @@ with tempfile.TemporaryDirectory(prefix='sshm-verify-') as directory:
             mcp.stdin.write(json.dumps({'jsonrpc':'2.0','method':'notifications/initialized'}) + '\n')
             mcp.stdin.flush()
             r = rpc(mcp, {'jsonrpc':'2.0','id':2,'method':'tools/list'})
-            expect('mcp_tool_catalog', len(r['result']['tools']) == 8)
+            expect('mcp_tool_catalog', len(r['result']['tools']) == 11)
             r = rpc(mcp, {'jsonrpc':'2.0','id':3,'method':'tools/call','params':{'name':'exec','arguments':{'host':host,'command':'cat','stdin':'mcp-ready'}}}, timeout=20)
             expect('mcp_remote_execution', r['result']['structuredContent']['stdout'] == 'mcp-ready' and not r['result']['isError'])
             r = rpc(mcp, {'jsonrpc':'2.0','id':5,'method':'tools/call','params':{'name':'history','arguments':{'host':host,'status':'result_unknown'}}})

@@ -1,4 +1,4 @@
-use crate::{Result, error::require};
+use crate::{Error, Result, error::require};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -77,6 +77,14 @@ pub struct Host {
     pub source: Option<ImportSource>,
 }
 impl Host {
+    pub fn project_path(&self, name: &str) -> Result<&str> {
+        self.context
+            .projects
+            .iter()
+            .find(|p| p.name == name)
+            .map(|p| p.path.as_str())
+            .ok_or_else(|| Error::new("project_not_found", "未找到此项目"))
+    }
     pub fn new(
         name: String,
         address: String,
@@ -257,6 +265,8 @@ pub struct OperationResult {
     pub stderr_truncated: bool,
     pub next_step: Option<String>,
     pub transfer: Option<TransferReceipt>,
+    /// Set by background job operations; `status` above only says whether talking to the server worked.
+    pub job: Option<JobReport>,
 }
 impl OperationResult {
     pub fn successful(&self) -> bool {
@@ -269,6 +279,26 @@ pub struct TransferReceipt {
     pub destination: String,
     pub direction: String,
     pub mode: String,
+}
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum JobState {
+    Running,
+    Exited,
+    /// Stopped by job_cancel; `exit_code` is set when the command still ended on its own terms.
+    Cancelled,
+    /// Neither running nor finished, as after a reboot or the process being killed from outside.
+    Lost,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobReport {
+    pub id: String,
+    pub state: JobState,
+    pub exit_code: Option<i32>,
+    /// The job's stdout and stderr go to one log; these are byte offsets into it.
+    pub output_bytes: u64,
+    pub output_offset: u64,
+    pub next_offset: u64,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OperationRecord {

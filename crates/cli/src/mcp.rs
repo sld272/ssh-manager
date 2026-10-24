@@ -32,6 +32,9 @@ struct ToolArgs {
     status: Option<Status>,
     since: Option<chrono::DateTime<chrono::Utc>>,
     limit: Option<u32>,
+    job: Option<String>,
+    offset: Option<u64>,
+    wait: Option<u64>,
 }
 fn required(value: Option<String>, field: &str) -> Result<String> {
     value.ok_or_else(|| Error::new("invalid_arguments", format!("缺少参数：{field}")))
@@ -52,6 +55,19 @@ fn tools() -> Vec<Value> {
     remote["stdin"] = json!({"type":"string","description":"传给命令标准输入的文本；脚本可配合 python3 - 或 sh -s 使用，免去多层引号"});
     remote["cwd"] = json!({"type":"string"});
     remote["project"] = json!({"type":"string"});
+    let mut job_start = remote.clone();
+    job_start
+        .as_object_mut()
+        .expect("object")
+        .remove("output_limit");
+    let mut job_status = check.clone();
+    job_status["job"] = json!({"type":"string"});
+    job_status["offset"] = json!({"type":"integer","minimum":0,"description":"从此字节位置继续读取输出，通常是上次返回的 next_offset；省略时读取最新的输出"});
+    job_status["wait"] = json!({"type":"integer","minimum":0,"default":0,"description":"任务未结束时最多等待的秒数，至少比 timeout 短 10 秒"});
+    let mut job_cancel = job_status.clone();
+    for key in ["offset", "wait", "output_limit"] {
+        job_cancel.as_object_mut().expect("object").remove(key);
+    }
     let mut transfer = check.clone();
     transfer["source"] = json!({"type":"string"});
     transfer["destination"] = json!({"type":"string"});
@@ -84,6 +100,27 @@ fn tools() -> Vec<Value> {
             "执行远端命令。结果未知时先核实实际状态；不要自动重试有副作用的操作",
             remote,
             vec!["host", "command"],
+            false,
+        ),
+        tool_definition(
+            "job_start",
+            "在后台启动远端命令并立即返回任务 ID；适合可能超过一次等待时间的任务。断开连接后命令继续运行",
+            job_start,
+            vec!["host", "command"],
+            false,
+        ),
+        tool_definition(
+            "job_status",
+            "查看后台任务：job.state 是任务状态，stdout 是合并后的输出片段；status 只表示这次查询是否成功",
+            job_status,
+            vec!["host", "job"],
+            true,
+        ),
+        tool_definition(
+            "job_cancel",
+            "终止后台任务的进程组并等待最多 10 秒；仍未结束时再次调用会强制结束",
+            job_cancel,
+            vec!["host", "job"],
             false,
         ),
         tool_definition(
@@ -203,34 +240,53 @@ fn invoke(
     };
     let result = match name {
         "check" => ssh.check(&host, a.connection.as_deref(), &options)?,
-        "exec" => {
+        "exec" | "job_start" => {
             error::require(
                 a.cwd.is_none() || a.project.is_none(),
                 "invalid_arguments",
                 "工作目录和项目不能同时指定",
             )?;
-            let path = a
-                .project
-                .map(|name| {
-                    store
-                        .host(&host)?
-                        .context
-                        .projects
-                        .into_iter()
-                        .find(|p| p.name == name)
-                        .map(|p| p.path)
-                        .ok_or_else(|| Error::new("project_not_found", "未找到此项目"))
-                })
-                .transpose()?;
-            ssh.exec(
-                &host,
-                a.connection.as_deref(),
-                &required(a.command, "command")?,
-                a.cwd.as_deref().or(path.as_deref()),
-                a.stdin.map(String::into_bytes),
-                &options,
-            )?
+            let h = store.host(&host)?;
+            let cwd = match &a.project {
+                Some(name) => Some(h.project_path(name)?),
+                None => a.cwd.as_deref(),
+            };
+            let command = required(a.command, "command")?;
+            let stdin = a.stdin.map(String::into_bytes);
+            if name == "exec" {
+                ssh.exec(
+                    &host,
+                    a.connection.as_deref(),
+                    &command,
+                    cwd,
+                    stdin,
+                    &options,
+                )?
+            } else {
+                ssh.job_start(
+                    &host,
+                    a.connection.as_deref(),
+                    &command,
+                    cwd,
+                    stdin,
+                    &options,
+                )?
+            }
         }
+        "job_status" => ssh.job_status(
+            &host,
+            a.connection.as_deref(),
+            &required(a.job, "job")?,
+            a.offset,
+            a.wait.unwrap_or(0),
+            &options,
+        )?,
+        "job_cancel" => ssh.job_cancel(
+            &host,
+            a.connection.as_deref(),
+            &required(a.job, "job")?,
+            &options,
+        )?,
         "upload" => {
             let mode = match a.mode.as_deref().unwrap_or("file") {
                 "file" => transfer::TransferMode::File,

@@ -58,7 +58,10 @@ export function statusPill(record) {
   return h('span', { class: `pill ${s.tone}` }, icon(s.icon, 12, 2.2), label);
 }
 
-const KINDS = { exec: '执行命令', check: '检查连接', upload: '上传文件', download: '下载文件' };
+const KINDS = {
+  exec: '执行命令', check: '检查连接', upload: '上传文件', download: '下载文件',
+  job_start: '启动后台任务', job_status: '查看后台任务', job_cancel: '终止后台任务',
+};
 export const kind = (k) => (KINDS[k] ? t(KINDS[k]) : k);
 
 const CALLERS = { cli: '你（命令行）', desktop: '你（桌面端）', library: '集成应用', mcp: 'MCP 客户端' };

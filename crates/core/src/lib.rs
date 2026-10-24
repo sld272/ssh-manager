@@ -3,6 +3,7 @@
 pub mod credentials;
 pub mod error;
 pub mod importer;
+pub mod job;
 pub mod model;
 pub mod process;
 pub mod reach;
