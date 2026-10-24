@@ -19,7 +19,7 @@ ssh-manager keeps your servers, logins, credentials and project notes in one pla
 Requires Rust 1.89+ and OpenSSH (`ssh`, `sftp`, `ssh-keygen`, `ssh-keyscan`).
 
 ```sh
-scripts/install.sh      # installs ssh-manager and ssh-manager-credentials to ~/.local/bin
+scripts/install.sh      # installs ssh-manager and ssh-manager-credentials to ~/.local/bin, and on macOS the app to ~/Applications
 ssh-manager doctor
 ```
 
@@ -65,10 +65,7 @@ Add `--json` to any command for structured output. See `ssh-manager --help` for 
 
 A Tauri desktop app shares the same catalog as the CLI and MCP server. It shows your hosts with live reachability (a login-free probe every few minutes while the window is open), connection paths, trust and login status, plus an operation history you can filter by caller and host. You can import from `~/.ssh/config`, edit a host's address, user and login method, save passwords, open a host in your terminal (Terminal, Ghostty or iTerm). Settings cover language, appearance, the default terminal and the agent setup prompt.
 
-```sh
-scripts/install.sh                      # the app uses the installed credentials helper
-cargo run --release -p ssh-manager-desktop
-```
+`scripts/install.sh` builds the app together with the CLI and installs it as `~/Applications/ssh-manager.app`, so the two always match. Set `SSH_MANAGER_APP_DIR` to install it elsewhere. During development, `cargo run --release -p ssh-manager-desktop` runs it straight from the source tree and uses the installed credentials helper.
 
 ## Use with agents
 

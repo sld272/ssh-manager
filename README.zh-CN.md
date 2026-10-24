@@ -19,7 +19,7 @@ ssh-manager 把服务器、登录方式、凭据和项目说明集中管理。ag
 需要 Rust 1.89+ 和 OpenSSH（`ssh`、`sftp`、`ssh-keygen`、`ssh-keyscan`）。
 
 ```sh
-scripts/install.sh      # 安装 ssh-manager 和 ssh-manager-credentials 到 ~/.local/bin
+scripts/install.sh      # 安装 ssh-manager 和 ssh-manager-credentials 到 ~/.local/bin；在 macOS 上同时把桌面端装到 ~/Applications
 ssh-manager doctor
 ```
 
@@ -65,10 +65,7 @@ ssh-manager exec web --project blog -- 'docker compose ps'
 
 基于 Tauri 的桌面应用，与 CLI、MCP 共用同一个主机库。可以查看主机的实时在线状态（窗口打开时每隔几分钟做一次不登录的探测）、连接路径、信任与登录状态，以及可按调用方和主机筛选的操作记录；也可以从 `~/.ssh/config` 导入、修改主机地址、用户和登录方式、保存密码、在终端中打开主机（终端、Ghostty 或 iTerm）。设置中可以切换语言、外观、默认终端，以及复制接入 agent 的提示词。
 
-```sh
-scripts/install.sh                      # 桌面端使用已安装的凭据组件
-cargo run --release -p ssh-manager-desktop
-```
+`scripts/install.sh` 会和 CLI 一起构建桌面端，安装为 `~/Applications/ssh-manager.app`，保证两者版本一致；设置 `SSH_MANAGER_APP_DIR` 可以换一个安装位置。开发时可以用 `cargo run --release -p ssh-manager-desktop` 直接从源码运行，它会使用已安装的凭据组件。
 
 ## 接入 agent
 
