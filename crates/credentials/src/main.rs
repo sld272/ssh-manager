@@ -28,6 +28,8 @@ fn credential_error(e: keyring::Error) -> Error {
         keyring::Error::NoEntry => {
             Error::new("credential_unavailable", "未找到保存的凭据，请重新绑定")
         }
+        // Only the macOS keychain reports a locked store in a way that is told apart below.
+        #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
         keyring::Error::PlatformFailure(ref native)
         | keyring::Error::NoStorageAccess(ref native) => {
             #[cfg(target_os = "macos")]
