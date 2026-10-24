@@ -218,6 +218,8 @@ pub enum Status {
     NeedsInteraction,
     ResultUnknown,
     TransferFailed,
+    /// Written when ssh starts and replaced by the result; one left behind was interrupted before it could record one.
+    Running,
 }
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]

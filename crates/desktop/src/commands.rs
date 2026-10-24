@@ -94,7 +94,10 @@ pub async fn overview() -> Result<Overview> {
         let history = store.history(None, None, None, 1000)?;
         let mut hosts = vec![];
         for host in store.list()? {
-            let records = history.iter().filter(|r| r.host_id == host.id);
+            // A running record says nothing yet about whether the host can be reached.
+            let records = history
+                .iter()
+                .filter(|r| r.host_id == host.id && r.status != Status::Running);
             let key_passphrase = match &host.connection(None)?.authentication {
                 Authentication::Key { paths, .. } => {
                     paths.iter().any(|p| credentials::key_has_passphrase(p))

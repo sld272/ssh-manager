@@ -103,7 +103,7 @@ fn tools() -> Vec<Value> {
         tool_definition(
             "history",
             "查询操作记录，按时间倒序；记录包含目标、时间、结果和耗时，不含命令和输出",
-            json!({"host":{"type":"string"},"status":{"type":"string","enum":["succeeded","command_failed","connection_failed","authentication_failed","host_key_required","host_key_changed","needs_interaction","result_unknown","transfer_failed"]},"since":{"type":"string","format":"date-time","description":"只返回此时间之后的记录"},"limit":{"type":"integer","minimum":1,"maximum":1000,"default":30}}),
+            json!({"host":{"type":"string"},"status":{"type":"string","enum":["succeeded","command_failed","connection_failed","authentication_failed","host_key_required","host_key_changed","needs_interaction","result_unknown","transfer_failed","running"]},"since":{"type":"string","format":"date-time","description":"只返回此时间之后的记录"},"limit":{"type":"integer","minimum":1,"maximum":1000,"default":30}}),
             vec![],
             true,
         ),

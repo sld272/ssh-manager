@@ -4,8 +4,8 @@ import { t } from './i18n.js';
 
 const FILTERS = [
   ['all', '全部', () => true],
-  ['failed', '未成功', (r) => r.status !== 'succeeded' && r.status !== 'result_unknown'],
-  ['unknown', '结果未知', (r) => r.status === 'result_unknown'],
+  ['failed', '未成功', (r) => !['succeeded', 'result_unknown', 'running'].includes(r.status)],
+  ['unknown', '结果未知', (r) => r.status === 'result_unknown' || r.status === 'running'],
 ];
 
 export function activityView(state, actions) {

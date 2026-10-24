@@ -914,6 +914,7 @@ fn render(value: &Value, cli: &Cli) -> Result<()> {
             Status::NeedsInteraction => "需要用户操作",
             Status::ResultUnknown => "结果未知",
             Status::TransferFailed => "传输未完成",
+            Status::Running => "未结束",
         };
         println!("{status} · {} ms", r.duration_ms);
         if let Some(receipt) = &r.transfer {

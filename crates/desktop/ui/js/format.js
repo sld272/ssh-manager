@@ -41,6 +41,7 @@ const STATUS = {
   needs_interaction: { label: '需要你操作', tone: 'warn', icon: 'alert', hint: '认证需要用户操作，请检查密钥密码或硬件密钥' },
   result_unknown: { label: '结果未知', tone: 'warn', icon: 'question', hint: '未能确认远端执行结果，请检查服务器上的实际状态' },
   transfer_failed: { label: '传输未完成', tone: 'err', icon: 'x', hint: '传输没有完成，目标可能有部分内容' },
+  running: { label: '未结束', tone: 'warn', icon: 'question', hint: '操作还在进行，或执行它的程序已中断，请检查服务器上的实际状态' },
 };
 
 export function status(record) {

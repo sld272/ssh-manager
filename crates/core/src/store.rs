@@ -127,7 +127,7 @@ impl Store {
         caller: &str,
         reason: Option<&str>,
     ) -> Result<()> {
-        let r = OperationRecord {
+        self.write(&OperationRecord {
             operation_id: result.operation_id,
             host_id: result.host_id,
             connection_id: result.connection_id,
@@ -143,14 +143,47 @@ impl Store {
             termination: result.termination.clone(),
             caller: caller.into(),
             reason: reason.map(str::to_owned),
-        };
+        })
+    }
+    /// Records an operation as running when ssh starts; `record` later replaces it with the result, so a
+    /// caller killed mid-operation still leaves an entry to check.
+    #[allow(clippy::too_many_arguments)]
+    pub fn begin(
+        &self,
+        operation_id: uuid::Uuid,
+        host: &Host,
+        connection_id: uuid::Uuid,
+        kind: &str,
+        started_at: chrono::DateTime<chrono::Utc>,
+        caller: &str,
+        reason: Option<&str>,
+    ) -> Result<()> {
+        self.write(&OperationRecord {
+            operation_id,
+            host_id: host.id,
+            connection_id,
+            host_name: host.name.clone(),
+            kind: kind.into(),
+            started_at,
+            duration_ms: 0,
+            prepare_ms: None,
+            connect_ms: None,
+            status: Status::Running,
+            phase: ExecutionPhase::Unknown,
+            exit_code: None,
+            termination: None,
+            caller: caller.into(),
+            reason: reason.map(str::to_owned),
+        })
+    }
+    fn write(&self, r: &OperationRecord) -> Result<()> {
         self.db.execute(
             "INSERT INTO operations VALUES(?1,?2,?3,?4) ON CONFLICT(id) DO UPDATE SET body=excluded.body",
             params![
                 r.operation_id.to_string(),
                 r.host_id.to_string(),
                 r.started_at.to_rfc3339(),
-                serde_json::to_string(&r)?
+                serde_json::to_string(r)?
             ],
         )?;
         Ok(())

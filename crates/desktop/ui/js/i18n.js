@@ -77,6 +77,8 @@ const EN = {
   '需要你操作': 'Needs you',
   '结果未知': 'Result unknown',
   '传输未完成': 'Transfer incomplete',
+  '未结束': 'Not finished',
+  '操作还在进行，或执行它的程序已中断，请检查服务器上的实际状态': 'The operation is still going, or whatever ran it stopped. Check the actual state on the server.',
   ' · 退出码 {code}': ' · exit {code}',
   ' · 超时': ' · timed out',
   ' · 已取消': ' · cancelled',

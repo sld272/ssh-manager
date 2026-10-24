@@ -238,6 +238,15 @@ impl OpenSsh<'_> {
         let mut cmd = self.command("sftp", &session);
         // -b enables fail-fast batch commands; explicitly disable its implicit BatchMode to permit our askpass broker.
         cmd.args(["-oBatchMode=no", "-b", "-", "--", &session.alias]);
+        self.store.begin(
+            id,
+            &h,
+            c.id,
+            &receipt.direction,
+            started_at,
+            &options.caller,
+            options.reason.as_deref(),
+        )?;
         let raw = process::run(
             cmd,
             Some(

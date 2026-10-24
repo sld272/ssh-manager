@@ -304,6 +304,15 @@ impl OpenSsh<'_> {
             cmd.arg("-n");
         }
         cmd.args(["--", &session.alias, &wrapper]);
+        self.store.begin(
+            operation_id,
+            &h,
+            c.id,
+            kind,
+            started_at,
+            &options.caller,
+            options.reason.as_deref(),
+        )?;
         let raw = process::run(
             cmd,
             stdin,
